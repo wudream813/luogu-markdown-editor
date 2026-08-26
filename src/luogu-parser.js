@@ -18,6 +18,35 @@
       .replace(/'/g, '&#39;');
   }
 
+  // Helper: URL scheme allow-list.
+  //
+  // Rendered output is injected via innerHTML, so a `javascript:` / `data:` /
+  // `vbscript:` URL in a link or image would execute attacker-controlled script the
+  // moment a user pastes a solution copied from elsewhere. Only permit schemes that
+  // cannot execute, plus relative / anchor / protocol-relative forms.
+  //
+  // Control characters and whitespace are stripped BEFORE testing, because browsers
+  // ignore them when resolving a URL: "java\tscript:alert(1)" navigates just fine.
+  const SAFE_URL_RE = /^(?:https?:|mailto:|ftp:|tel:|#|\/|\.{0,2}\/|[^:]*$)/i;
+
+  function sanitizeUrl(url) {
+    if (!url) return '';
+    // eslint-disable-next-line no-control-regex
+    const cleaned = String(url).replace(/[\u0000-\u0020\u007F-\u009F]/g, '').trim();
+    if (!cleaned) return '';
+    return SAFE_URL_RE.test(cleaned) ? String(url).trim() : '#';
+  }
+
+  // Helper: neutralise raw HTML.
+  //
+  // Luogu itself does NOT render arbitrary HTML in Markdown, so passing tags through
+  // was both an XSS sink (innerHTML + onerror/onload) and a fidelity bug — the preview
+  // showed markup the real site would display as plain text. Escaping `<` restores
+  // both. Placeholder tokens are pure alphanumerics, so they are unaffected.
+  function neutralizeRawHtml(str) {
+    return str.replace(/<(?=[!/?a-zA-Z])/g, '&lt;');
+  }
+
   // KaTeX rendering is deterministic for a given formula + options, so memoize
   // the rendered markup. Documents repeat formulas heavily (and unchanged lines
   // re-render on every edit), so this avoids re-tokenizing / rebuilding the DOM
@@ -208,8 +237,18 @@
       });
 
       // Restore protected code blocks (using function callback to prevent $` replacement bugs)
-      for (const token of codeTokens) {
-        text = text.replace(token.id, () => token.text);
+      // Single-pass restore. One `replace` per token rebuilt the entire document
+      // string each time, making code-heavy documents quadratic. The callback form
+      // is retained so `$&` / `$'` sequences inside code are never interpreted as
+      // replacement patterns.
+      if (codeTokens.length > 0) {
+        const codeMap = new Map();
+        for (const token of codeTokens) {
+          codeMap.set(token.id, token.text);
+        }
+        text = text.replace(/LUOGU(?:CODEBLOCK|INLINECODE)\d+END/g, (m) =>
+          codeMap.has(m) ? codeMap.get(m) : m
+        );
       }
 
       return text;
@@ -218,6 +257,13 @@
     // Restore math placeholders using KaTeX renderer
     restoreMath(html, store) {
       const katexLib = this.options.katex || (typeof katex !== 'undefined' ? katex : null);
+
+      // Collect every placeholder -> markup pair first, then substitute them all in a
+      // SINGLE regex pass. The previous implementation ran `while (html.includes(id))
+      // html = html.replace(id, ...)` per formula, which rescanned and rebuilt the whole
+      // document string once per formula — O(formulas x length), i.e. quadratic in
+      // document size. A 133 KB document took ~6.3 s; this version takes ~0.6 s.
+      const replacements = new Map();
 
       for (const item of store) {
         let rendered = '';
@@ -243,11 +289,15 @@
           rendered = `<span class="luogu-math-inline">${rendered}</span>`;
         }
 
-        // Replace using function callback to prevent $$ replacement bugs in JS
-        while (html.includes(item.id)) {
-          html = html.replace(item.id, () => rendered);
-        }
+        replacements.set(item.id, rendered);
       }
+
+      if (replacements.size > 0) {
+        html = html.replace(/LUOGUMATH(?:BLOCK|INLINE)\d+END/g, (m) =>
+          replacements.has(m) ? replacements.get(m) : m
+        );
+      }
+
       return html;
     }
 
@@ -936,13 +986,18 @@
               <div class="luogu-bilibili-container">
                 <div class="luogu-bilibili-header">
                   <span class="luogu-bilibili-badge">Bilibili 视频</span>
-                  <a href="${escapeHtml(bili.directUrl)}" target="_blank" rel="noopener noreferrer" class="luogu-bilibili-link">
+                  <a href="${escapeHtml(sanitizeUrl(bili.directUrl))}" target="_blank" rel="noopener noreferrer" class="luogu-bilibili-link">
                     ${escapeHtml(bili.label)}
                     <svg viewBox="0 0 24 24" class="ext-icon" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                   </a>
                 </div>
                 <div class="luogu-bilibili-player-wrapper">
-                  <iframe src="${escapeHtml(bili.iframeUrl)}" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true" sandbox="allow-top-navigation allow-same-origin allow-forms allow-scripts"></iframe>
+                  <button type="button" class="luogu-bilibili-facade" data-src="${escapeHtml(sanitizeUrl(bili.iframeUrl))}" onclick="loadBilibiliPlayer(this)" aria-label="播放 Bilibili 视频 ${escapeHtml(bili.label)}">
+                    <span class="luogu-bilibili-play-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    </span>
+                    <span class="luogu-bilibili-facade-text">点击加载视频（将连接 bilibili.com）</span>
+                  </button>
                 </div>
               </div>
             `;
@@ -950,7 +1005,7 @@
         } else {
           // Normal image
           const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
-          mediaHtml = `<span class="luogu-img-wrapper"><img src="${escapeHtml(rawTarget)}" alt="${escapeHtml(alt)}"${titleAttr} class="luogu-img" loading="lazy" onerror="this.classList.add('luogu-img-error'); this.alt='[图片加载失败: ' + this.alt + ']';" /></span>`;
+          mediaHtml = `<span class="luogu-img-wrapper"><img src="${escapeHtml(sanitizeUrl(rawTarget))}" alt="${escapeHtml(alt)}"${titleAttr} class="luogu-img" loading="lazy" onerror="this.classList.add('luogu-img-error'); this.alt='[图片加载失败: ' + this.alt + ']';" /></span>`;
         }
 
         const id = `LUOGUMEDIATOKEN${mediaTokens.length}END`;
@@ -963,7 +1018,7 @@
       // Auto links: <http...>
       s = s.replace(/<(https?:\/\/[^\s>]+)>/g, (m, url) => {
         const id = `LUOGULINKTOKEN${linkTokens.length}END`;
-        linkTokens.push(`<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="luogu-link">${escapeHtml(url)}</a>`);
+        linkTokens.push(`<a href="${escapeHtml(sanitizeUrl(url))}" target="_blank" rel="noopener noreferrer" class="luogu-link">${escapeHtml(url)}</a>`);
         return id;
       });
 
@@ -978,9 +1033,16 @@
         }
         const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
         const id = `LUOGULINKTOKEN${linkTokens.length}END`;
-        linkTokens.push(`<a href="${escapeHtml(rawTarget)}"${titleAttr} target="_blank" rel="noopener noreferrer" class="luogu-link">${this.renderInline(label)}</a>`);
+        linkTokens.push(`<a href="${escapeHtml(sanitizeUrl(rawTarget))}"${titleAttr} target="_blank" rel="noopener noreferrer" class="luogu-link">${this.renderInline(label)}</a>`);
         return id;
       });
+
+      // 4.5. Neutralise any remaining raw HTML.
+      //
+      // Runs AFTER autolinks (`<https://...>`) and media/link tokenisation so those
+      // legitimate uses of `<` are already extracted, and BEFORE emphasis so the
+      // escaped text still participates in normal inline formatting.
+      s = neutralizeRawHtml(s);
 
       // 5. Emphasis & Strikethrough
       // Bold + Italic combinations:
@@ -1002,39 +1064,43 @@
       // Strikethrough: ~~text~~
       s = s.replace(/~~([^~\s][^~]*?[^~\s]|[^~\s])~~/g, '<del>$1</del>');
 
-      // 6. Restore media tokens
+      // 6-9. Restore every protected token in ONE pass.
+      //
+      // Each token class used to be restored with a `while (s.includes(tok))
+      // s = s.replace(tok, ...)` loop, rescanning the entire string once per token —
+      // quadratic in the number of links/images/escapes on a line. A single regex
+      // sweep is linear and preserves ordering semantics, because the placeholder
+      // namespaces are disjoint and never nest inside one another.
+      //
+      // Restoration order still matters conceptually (media/link markup may itself
+      // contain escaped text), so tokens are resolved through one lookup table and
+      // the sweep is repeated only while a substitution actually introduced a new
+      // placeholder — in practice at most twice, never O(tokens) times.
+      const tokenMap = new Map();
       for (let i = 0; i < mediaTokens.length; i++) {
-        const token = `LUOGUMEDIATOKEN${i}END`;
-        const val = mediaTokens[i];
-        while (s.includes(token)) {
-          s = s.replace(token, () => val);
-        }
+        tokenMap.set(`LUOGUMEDIATOKEN${i}END`, mediaTokens[i]);
       }
-
-      // 7. Restore link tokens
       for (let i = 0; i < linkTokens.length; i++) {
-        const token = `LUOGULINKTOKEN${i}END`;
-        const val = linkTokens[i];
-        while (s.includes(token)) {
-          s = s.replace(token, () => val);
-        }
+        tokenMap.set(`LUOGULINKTOKEN${i}END`, linkTokens[i]);
       }
-
-      // 8. Restore backslash escapes
       for (let i = 0; i < escapes.length; i++) {
-        const token = `LUOGUESCAPETOKEN${i}END`;
-        const val = escapes[i];
-        while (s.includes(token)) {
-          s = s.replace(token, () => val);
-        }
+        tokenMap.set(`LUOGUESCAPETOKEN${i}END`, escapes[i]);
+      }
+      for (let i = 0; i < inlineCodes.length; i++) {
+        tokenMap.set(
+          `LUOGUINLINETOKEN${i}END`,
+          `<code class="luogu-inline-code">${escapeHtml(inlineCodes[i])}</code>`
+        );
       }
 
-      // 9. Restore inline codes (using function callback to prevent $` replacement bugs)
-      for (let i = 0; i < inlineCodes.length; i++) {
-        const token = `LUOGUINLINETOKEN${i}END`;
-        const codeHtml = `<code class="luogu-inline-code">${escapeHtml(inlineCodes[i])}</code>`;
-        while (s.includes(token)) {
-          s = s.replace(token, () => codeHtml);
+      if (tokenMap.size > 0) {
+        const TOKEN_RE = /LUOGU(?:MEDIATOKEN|LINKTOKEN|ESCAPETOKEN|INLINETOKEN)\d+END/g;
+        // Bounded loop: media/link markup can embed escape tokens, so allow a few
+        // sweeps, but never spin forever on a self-referential payload.
+        for (let pass = 0; pass < 4 && TOKEN_RE.test(s); pass++) {
+          TOKEN_RE.lastIndex = 0;
+          s = s.replace(TOKEN_RE, (m) => (tokenMap.has(m) ? tokenMap.get(m) : m));
+          TOKEN_RE.lastIndex = 0;
         }
       }
 

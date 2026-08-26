@@ -11,12 +11,19 @@ const safeStorage = {
       return null;
     }
   },
+  // Returns true on success. Callers can surface a warning instead of letting a
+  // failed write (most often QuotaExceededError on a large draft) pass unnoticed,
+  // which previously left users believing their work was saved when it was not.
   setItem(key, val) {
     try {
       if (typeof localStorage !== 'undefined' && localStorage) {
         localStorage.setItem(key, val);
+        return true;
       }
-    } catch (e) {}
+      return false;
+    } catch (e) {
+      return false;
+    }
   }
 };
 
@@ -125,7 +132,17 @@ const safeStorage = {
 
     bindEvents() {
       // Textarea input
+      // Scale the debounce with document size. A flat 120 ms means a very large
+      // document re-renders while the user is still mid-word; giving big documents a
+      // slightly longer idle window keeps typing responsive without a visible lag on
+      // the short documents that make up the common case.
       let debounceTimer = null;
+      const renderDelay = () => {
+        const len = this.textarea.value.length;
+        if (len > 200000) return 400;
+        if (len > 50000) return 250;
+        return 120;
+      };
       this.textarea.addEventListener('input', () => {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
@@ -133,7 +150,7 @@ const safeStorage = {
           this.render();
           this.updateLineNumbers();
           this.autoSave();
-        }, 120);
+        }, renderDelay());
       });
 
       // Synchronized scrolling
@@ -163,10 +180,21 @@ const safeStorage = {
       window.addEventListener('dragover', (e) => e.preventDefault());
       window.addEventListener('drop', (e) => {
         e.preventDefault();
-        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-          const file = e.dataTransfer.files[0];
-          this.openLocalFile(file);
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || files.length === 0) return;
+
+        // Only text-ish documents can be opened. Dropping an image used to load its
+        // binary content into the editor as mojibake with no explanation.
+        const TEXT_EXT = /\.(md|markdown|txt|text)$/i;
+        const file = files[0];
+        if (!TEXT_EXT.test(file.name)) {
+          this.showToast(`无法打开「${file.name}」：仅支持 .md / .markdown / .txt 文件`, 'error');
+          return;
         }
+        if (files.length > 1) {
+          this.showToast(`已打开「${file.name}」，其余 ${files.length - 1} 个文件被忽略`, 'info');
+        }
+        this.openLocalFile(file);
       });
 
       // Splitter resizer
@@ -181,34 +209,70 @@ const safeStorage = {
 
       if (!resizer || !editorPane || !previewPane || !workspace) return;
 
-      let isDragging = false;
+      // Pointer Events give mouse, touch and pen support from one code path, and
+      // pointer capture keeps the drag alive when the cursor outruns the 6px handle.
+      // The move/up listeners are attached only for the duration of a drag; the old
+      // implementation left permanent window-level mousemove handlers running that
+      // fired on every pointer motion for the lifetime of the page.
+      const MIN_PANE_WIDTH = 200;
+      let activePointerId = null;
 
-      resizer.addEventListener('mousedown', (e) => {
-        isDragging = true;
-        resizer.classList.add('resizing');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-      });
-
-      window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
+      const onPointerMove = (e) => {
         const rect = workspace.getBoundingClientRect();
         const offsetX = e.clientX - rect.left;
         const totalWidth = rect.width;
-        const minW = 200;
-        if (offsetX > minW && (totalWidth - offsetX) > minW) {
+        if (offsetX > MIN_PANE_WIDTH && (totalWidth - offsetX) > MIN_PANE_WIDTH) {
           const leftPct = (offsetX / totalWidth) * 100;
           editorPane.style.flex = `0 0 ${leftPct}%`;
           previewPane.style.flex = `0 0 ${100 - leftPct}%`;
         }
+      };
+
+      const endDrag = () => {
+        if (activePointerId === null) return;
+        try {
+          resizer.releasePointerCapture(activePointerId);
+        } catch (err) { /* pointer already released */ }
+        activePointerId = null;
+        resizer.classList.remove('resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', endDrag);
+        window.removeEventListener('pointercancel', endDrag);
+      };
+
+      resizer.addEventListener('pointerdown', (e) => {
+        if (activePointerId !== null) return;
+        activePointerId = e.pointerId;
+        try {
+          resizer.setPointerCapture(e.pointerId);
+        } catch (err) { /* capture unsupported; drag still works */ }
+        resizer.classList.add('resizing');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', endDrag);
+        window.addEventListener('pointercancel', endDrag);
+        e.preventDefault();
       });
 
-      window.addEventListener('mouseup', () => {
-        if (isDragging) {
-          isDragging = false;
-          resizer.classList.remove('resizing');
-          document.body.style.cursor = '';
-          document.body.style.userSelect = '';
+      // Keyboard accessibility: the splitter is now operable without a pointer.
+      resizer.setAttribute('tabindex', '0');
+      resizer.setAttribute('role', 'separator');
+      resizer.setAttribute('aria-orientation', 'vertical');
+      resizer.setAttribute('aria-label', '调整编辑区与预览区宽度');
+      resizer.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const rect = workspace.getBoundingClientRect();
+        const current = editorPane.getBoundingClientRect().width;
+        const delta = e.key === 'ArrowLeft' ? -32 : 32;
+        const next = current + delta;
+        if (next > MIN_PANE_WIDTH && (rect.width - next) > MIN_PANE_WIDTH) {
+          const leftPct = (next / rect.width) * 100;
+          editorPane.style.flex = `0 0 ${leftPct}%`;
+          previewPane.style.flex = `0 0 ${100 - leftPct}%`;
         }
       });
     }
@@ -322,16 +386,29 @@ const safeStorage = {
           this.textarea.value = val.substring(0, start) + '    ' + val.substring(end);
           this.textarea.selectionStart = this.textarea.selectionEnd = start + 4;
         }
+        // Indentation is a real edit: record it so Ctrl+Z can revert it. This was
+        // previously missing, making Tab / Shift+Tab silently un-undoable.
+        this.pushHistory();
         this.render();
         this.updateLineNumbers();
+        this.autoSave();
       }
     }
 
-    // Push state to Undo stack
+    // Push state to Undo stack.
+    //
+    // Entries record the caret position alongside the text, because restoring only
+    // the text left the caret at the very end of the document after every undo,
+    // which made the feature unusable for edits in the middle of a long solution.
     pushHistory() {
       const val = this.textarea.value;
-      if (this.undoStack.length === 0 || this.undoStack[this.undoStack.length - 1] !== val) {
-        this.undoStack.push(val);
+      const top = this.undoStack[this.undoStack.length - 1];
+      if (!top || top.value !== val) {
+        this.undoStack.push({
+          value: val,
+          selectionStart: this.textarea.selectionStart,
+          selectionEnd: this.textarea.selectionEnd,
+        });
         if (this.undoStack.length > this.maxHistory) {
           this.undoStack.shift();
         }
@@ -339,14 +416,62 @@ const safeStorage = {
       }
     }
 
+    // Caret position for an undo/redo: the first character where the two versions
+    // differ. A stored snapshot caret is NOT good enough, because it records where
+    // the caret happened to be when that snapshot was taken, not where the edit being
+    // reverted actually occurred — undoing a change in the middle of a document would
+    // still drop the caret at the end.
+    static diffCaret(from, to) {
+      const max = Math.min(from.length, to.length);
+      let i = 0;
+      while (i < max && from.charCodeAt(i) === to.charCodeAt(i)) i++;
+      return i;
+    }
+
+    // Restore a history entry, putting the caret at the edit site and scrolling it
+    // into view.
+    applyHistoryEntry(entry) {
+      const previous = this.textarea.value;
+      this.textarea.value = entry.value;
+
+      let pos;
+      if (previous === entry.value) {
+        pos = Math.min(entry.selectionStart ?? entry.value.length, entry.value.length);
+      } else {
+        pos = Math.min(LuoguEditorApp.diffCaret(previous, entry.value), entry.value.length);
+      }
+
+      this.textarea.setSelectionRange(pos, pos);
+      this.textarea.focus();
+      this.scrollCaretIntoView();
+      this.render();
+      this.updateLineNumbers();
+      this.autoSave();
+    }
+
+    // Ensure the caret's line is visible after a programmatic value change.
+    scrollCaretIntoView() {
+      const ta = this.textarea;
+      const before = ta.value.slice(0, ta.selectionStart);
+      const line = before.split('\n').length - 1;
+      const style = window.getComputedStyle(ta);
+      const lineHeight = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.5) || 20;
+      const target = line * lineHeight;
+      if (target < ta.scrollTop || target > ta.scrollTop + ta.clientHeight - lineHeight) {
+        ta.scrollTop = Math.max(0, target - ta.clientHeight / 2);
+      }
+    }
+
     undo() {
       if (this.undoStack.length > 1) {
         const cur = this.undoStack.pop();
-        this.redoStack.push(cur);
-        const prev = this.undoStack[this.undoStack.length - 1];
-        this.textarea.value = prev;
-        this.render();
-        this.updateLineNumbers();
+        // Remember where the caret is *now* so redo can restore it faithfully.
+        this.redoStack.push({
+          value: cur.value,
+          selectionStart: this.textarea.selectionStart,
+          selectionEnd: this.textarea.selectionEnd,
+        });
+        this.applyHistoryEntry(this.undoStack[this.undoStack.length - 1]);
       }
     }
 
@@ -354,9 +479,7 @@ const safeStorage = {
       if (this.redoStack.length > 0) {
         const next = this.redoStack.pop();
         this.undoStack.push(next);
-        this.textarea.value = next;
-        this.render();
-        this.updateLineNumbers();
+        this.applyHistoryEntry(next);
       }
     }
 
@@ -364,15 +487,19 @@ const safeStorage = {
     render() {
       if (!this.textarea || !this.previewEl) return;
 
-      // 1. Record all currently open callout titles in preview to preserve open state
+      // 1. Record which callouts are currently open so the state survives re-render.
+      //
+      // The key combines document order with the title. Keying on the title alone made
+      // two callouts sharing a title (very common: several "提示" boxes in one
+      // solution) share a single state, so expanding one expanded them all.
       const openCalloutKeys = new Set();
       if (this.previewEl) {
         const existingDetails = this.previewEl.querySelectorAll('details.luogu-callout');
         existingDetails.forEach((d, idx) => {
           if (d.hasAttribute('open')) {
             const titleEl = d.querySelector('.luogu-callout-title');
-            const title = titleEl ? titleEl.textContent.trim() : `callout-${idx}`;
-            openCalloutKeys.add(title);
+            const title = titleEl ? titleEl.textContent.trim() : '';
+            openCalloutKeys.add(`${idx}\u0000${title}`);
           }
         });
       }
@@ -387,8 +514,8 @@ const safeStorage = {
         const newDetails = this.previewEl.querySelectorAll('details.luogu-callout');
         newDetails.forEach((d, idx) => {
           const titleEl = d.querySelector('.luogu-callout-title');
-          const title = titleEl ? titleEl.textContent.trim() : `callout-${idx}`;
-          if (openCalloutKeys.has(title)) {
+          const title = titleEl ? titleEl.textContent.trim() : '';
+          if (openCalloutKeys.has(`${idx}\u0000${title}`)) {
             d.setAttribute('open', '');
           }
         });
@@ -443,9 +570,26 @@ const safeStorage = {
     // Auto save draft to LocalStorage
     autoSave() {
       const content = this.textarea.value;
-      safeStorage.setItem('luogu_editor_draft', content);
+      const ok = safeStorage.setItem('luogu_editor_draft', content);
       const saveStatus = document.getElementById('saveStatusIndicator');
+
+      if (!ok) {
+        // A failed write is the one case the user MUST know about — otherwise the
+        // "已自动保存" label is an outright lie and the draft is lost on refresh.
+        if (saveStatus) {
+          saveStatus.innerText = '⚠ 自动保存失败，请手动导出！';
+          saveStatus.classList.add('save-failed');
+        }
+        if (!this._saveFailWarned) {
+          this._saveFailWarned = true;
+          this.showToast('本地自动保存失败（存储空间不足或被浏览器禁用），请使用 Ctrl+S 手动保存文件！', 'error');
+        }
+        return;
+      }
+
+      this._saveFailWarned = false;
       if (saveStatus) {
+        saveStatus.classList.remove('save-failed');
         const now = new Date();
         const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
         saveStatus.innerText = `已自动保存 (${timeStr})`;
@@ -1114,6 +1258,16 @@ const safeStorage = {
             .join('\n')
         : '';
 
+      // Harvest the inlined Prism theme the same way. Previously the export linked
+      // the jsDelivr CDN stylesheet, so an "offline export" silently lost all code
+      // highlighting without a network connection.
+      const prismCss = (typeof document !== 'undefined')
+        ? Array.from(document.querySelectorAll('style'))
+            .map(s => s.textContent)
+            .filter(css => /\.token\.(?:comment|keyword|string)/.test(css))
+            .join('\n')
+        : '';
+
       const fullHtml = `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
 <head>
@@ -1122,7 +1276,7 @@ const safeStorage = {
   <title>${escapeHtml(title)}</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%233498db'/%3E%3Cstop offset='100%25' stop-color='%231d6fa5'/%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M7 11h3l3 7 3-7h3v10h-2.5v-6.5l-2.7 6.5h-1.6L9.5 14.5V21H7V11zm15 0h2v10h-2v-3.5h-2.5v-2H22V11z' fill='%23ffffff'/%3E%3C/svg%3E">
   <style>${katexCss}</style>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css">
+  <style>${prismCss}</style>
   <style>
     :root {
       --bg: #f8fafc;
@@ -1398,6 +1552,11 @@ const safeStorage = {
     .ext-icon { width: 14px; height: 14px; display: inline-block; vertical-align: middle; }
     .luogu-bilibili-player-wrapper { position: relative; width: 100%; padding-top: 56.25%; }
     .luogu-bilibili-player-wrapper iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; }
+    .luogu-bilibili-facade { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; cursor: pointer; background: #111827; color: #e5e7eb; font-size: 13px; font-family: inherit; }
+    .luogu-bilibili-facade:hover { background: #1f2937; }
+    .luogu-bilibili-facade:focus-visible { outline: 2px solid #38bdf8; outline-offset: -2px; }
+    .luogu-bilibili-play-icon { width: 56px; height: 56px; border-radius: 50%; background: #fb7299; color: #fff; display: flex; align-items: center; justify-content: center; }
+    .luogu-bilibili-play-icon svg { width: 28px; height: 28px; margin-left: 3px; }
     /* Epigraph */
     .luogu-epigraph { position: relative; margin: 1.5em 0; padding: 16px 20px 16px 48px; background: rgba(0,0,0,0.02); border-left: 4px solid var(--primary); border-radius: 6px; }
     .luogu-epigraph-quote-mark { position: absolute; top: 6px; left: 14px; font-size: 38px; line-height: 1; font-family: Georgia, serif; color: var(--primary); opacity: 0.5; }
@@ -1496,6 +1655,21 @@ const safeStorage = {
   <div id="toastTip" class="toast-tip">已复制 Markdown 源码！</div>
 
   <script>
+    // Bilibili players are loaded only on demand so an exported document stays
+    // fully offline (and tracker-free) until the reader opts in.
+    function loadBilibiliPlayer(btn) {
+      var src = btn.getAttribute('data-src');
+      if (!src) return;
+      var iframe = document.createElement('iframe');
+      iframe.setAttribute('src', src);
+      iframe.setAttribute('scrolling', 'no');
+      iframe.setAttribute('frameborder', 'no');
+      iframe.setAttribute('allowfullscreen', 'true');
+      iframe.setAttribute('referrerpolicy', 'no-referrer');
+      iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-presentation');
+      btn.replaceWith(iframe);
+    }
+
     function toggleTheme() {
       var html = document.documentElement;
       var cur = html.getAttribute('data-theme') || 'light';
@@ -1651,6 +1825,29 @@ const safeStorage = {
       LuoguEditor.copyCode(btn);
     }
   };
+  // Click-to-load for Bilibili embeds.
+  //
+  // The iframe used to be emitted eagerly, so merely opening the editor (whose
+  // welcome document contains a video) fired requests to player.bilibili.com and
+  // hdslb.com. That broke the "fully offline" guarantee and silently leaked a
+  // request — plus third-party tracking cookies — before the user did anything.
+  // The player is now only fetched after an explicit click.
+  global.loadBilibiliPlayer = function (btn) {
+    const src = btn.getAttribute('data-src');
+    if (!src) return;
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('src', src);
+    iframe.setAttribute('scrolling', 'no');
+    iframe.setAttribute('frameborder', 'no');
+    iframe.setAttribute('framespacing', '0');
+    iframe.setAttribute('allowfullscreen', 'true');
+    iframe.setAttribute('referrerpolicy', 'no-referrer');
+    // Note: no allow-same-origin — combining it with allow-scripts on a remote
+    // document would let the frame escape its own sandbox.
+    iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-presentation');
+    btn.replaceWith(iframe);
+  };
+
   // Global helper for task checkbox toggle
   global.toggleTaskCheckbox = function (cb) {
     if (typeof LuoguEditor !== 'undefined' && LuoguEditor.toggleTask) {
@@ -1661,6 +1858,7 @@ const safeStorage = {
   if (typeof window !== 'undefined') {
     window.copyCodeBlock = global.copyCodeBlock;
     window.toggleTaskCheckbox = global.toggleTaskCheckbox;
+    window.loadBilibiliPlayer = global.loadBilibiliPlayer;
   }
 
   global.LuoguEditorApp = LuoguEditorApp;
