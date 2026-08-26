@@ -1223,8 +1223,8 @@ const safeStorage = {
     li { margin-bottom: 0.4em; }
     ul.luogu-task-list { list-style: none; padding-left: 0; }
     .luogu-task-item { display: flex; align-items: center; margin-bottom: 6px; }
-    .luogu-checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-    .luogu-task-checkbox { width: 15px; height: 15px; accent-color: var(--primary); }
+    .luogu-checkbox-label { display: flex; align-items: center; gap: 8px; cursor: default; }
+    .luogu-task-checkbox { width: 15px; height: 15px; accent-color: var(--primary); pointer-events: none !important; cursor: default !important; }
     /* Toast */
     .toast-tip {
       position: fixed;
