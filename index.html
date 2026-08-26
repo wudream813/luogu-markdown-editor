@@ -4756,7 +4756,7 @@ Prism.languages.js = Prism.languages.javascript;
           if (
             /^#{1,6}\s+/.test(cur) ||
             /^[`~]{3,}/.test(cur) ||
-            /^:{3,}/.test(cur) ||
+            /^:{3,}[a-zA-Z0-9_\-]/.test(cur) ||
             /^::cute-table/i.test(cur) ||
             /^(\*\s*){3,}$|^(-\s*){3,}$|^(_\s*){3,}$/.test(cur.trim()) ||
             /^\s*>/.test(cur) ||
