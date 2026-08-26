@@ -1212,6 +1212,14 @@ const safeStorage = {
     .luogu-table th { background: rgba(0, 0, 0, 0.03); font-weight: 600; }
     .luogu-tuack-table { border: 2px solid #3498db; border-radius: 6px; }
     .luogu-tuack-table th { background: #3498db; color: #ffffff; text-align: center; }
+    .luogu-tuack-table td { border: 1px solid #d4e6f1; }
+    .luogu-tuack-table tr:nth-child(even) td { background: #f4f9fd; }
+    .luogu-tuack-table tr:hover td { background: #eaf2f8; }
+    [data-theme="dark"] .luogu-tuack-table { border-color: #1f6feb; }
+    [data-theme="dark"] .luogu-tuack-table th { background: #1f6feb; border-color: #1759c4; }
+    [data-theme="dark"] .luogu-tuack-table td { border-color: #2d3a4a; }
+    [data-theme="dark"] .luogu-tuack-table tr:nth-child(even) td { background: #1c2530; }
+    [data-theme="dark"] .luogu-tuack-table tr:hover td { background: #24303e; }
     /* Callouts */
     .luogu-callout { margin: 1.3em 0; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; }
     .luogu-callout-summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-weight: 600; font-size: 13px; cursor: pointer; list-style: none; user-select: none; }
@@ -1279,6 +1287,23 @@ const safeStorage = {
     .toast-tip.show { opacity: 1; transform: translateY(0); }
     /* Print */
     @media print {
+      /* Force a light palette so the printed PDF stays readable regardless of the
+         exported document's active theme. */
+      :root, [data-theme="dark"] {
+        --bg: #ffffff;
+        --card-bg: #ffffff;
+        --text: #24292e;
+        --text-muted: #6e7781;
+        --border: #d0d7de;
+        --primary: #3498db;
+        --code-bg: #f6f8fa;
+        --code-text: #24292e;
+      }
+      .luogu-tuack-table { border-color: #3498db !important; }
+      .luogu-tuack-table th { background: #3498db !important; border-color: #2980b9 !important; color: #fff !important; }
+      .luogu-tuack-table td { border-color: #d4e6f1 !important; }
+      .luogu-tuack-table tr:nth-child(even) td { background: #f4f9fd !important; }
+      .luogu-tuack-table tr:hover td { background: #eaf2f8 !important; }
       body { padding: 0; background: #fff; color: #1a1a1a; }
       .article-container { border: none; box-shadow: none; padding: 0; max-width: 100%; }
       .action-bar, .luogu-code-copy-btn, .toast-tip, .luogu-bilibili-container { display: none !important; }
