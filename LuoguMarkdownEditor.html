@@ -1236,8 +1236,9 @@ code[class*="language-"] {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
+  /* Solid dim only — backdrop-filter:blur forces a full-viewport backdrop
+     repaint on every hover style change inside the dialog (esp. KaTeX cards). */
+  background: rgba(0, 0, 0, 0.48);
   z-index: 10000;
   align-items: center;
   justify-content: center;
@@ -1353,7 +1354,10 @@ code[class*="language-"] {
   margin-top: 4px;
 }
 
-/* Formula Drawer Grid - 0ms instant response without lag */
+/* Formula Drawer Grid
+   Hover must stay GPU-cheap: KaTeX trees are deep, so never change the card's
+   own background/border on :hover (that invalidates paint for every nested
+   span). Instead, fade a single ::before overlay via opacity only. */
 .math-tabs {
   display: flex;
   gap: 6px;
@@ -1361,6 +1365,8 @@ code[class*="language-"] {
   margin-bottom: 16px;
   overflow-x: auto;
   padding-bottom: 6px;
+  /* Isolate tab strip repaints from the formula grid below. */
+  contain: layout style;
 }
 
 .math-tab-btn {
@@ -1373,12 +1379,22 @@ code[class*="language-"] {
   border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
+  transition: none;
 }
 
 .math-tab-btn.active {
   background: var(--luogu-blue-light);
   color: var(--luogu-blue);
   font-weight: 600;
+}
+
+/* Panels stay mounted; only [hidden] toggles. Avoids re-parsing KaTeX HTML. */
+.math-tab-panel {
+  display: block;
+}
+
+.math-tab-panel[hidden] {
+  display: none !important;
 }
 
 .math-grid {
@@ -1393,6 +1409,12 @@ code[class*="language-"] {
 }
 
 .math-item-card {
+  /* <button> reset — cards are real buttons for a11y + no inline onclick */
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1406,36 +1428,76 @@ code[class*="language-"] {
   max-width: 100%;
   overflow: hidden;
   box-sizing: border-box;
+  position: relative;
+  /* Isolate each card so hover compositing never dirties siblings. */
   contain: layout style paint;
   transition: none !important;
+}
+
+/* Hover highlight is a separate overlay layer — only its opacity changes. */
+.math-item-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  /* 1px inset ring + fill without touching the card's own border/background */
+  box-shadow: inset 0 0 0 1px var(--luogu-blue);
+  background: var(--luogu-blue-light);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  /* opacity-only = compositor-friendly, no layout/paint of KaTeX children */
+  transition: opacity 0.06s linear;
+}
+
+.math-item-card:hover::before,
+.math-item-card:focus-visible::before {
+  opacity: 0.92;
+}
+
+.math-item-card:focus {
+  outline: none;
+}
+
+.math-item-card:focus-visible {
+  outline: 2px solid var(--luogu-blue);
+  outline-offset: 1px;
 }
 
 .math-item-card.card-wide {
   grid-column: span 2;
 }
 
-.math-item-card:hover {
-  border-color: #3498db !important;
-  background-color: var(--luogu-blue-light) !important;
-}
+/* IMPORTANT: do NOT change background/border on the card itself on :hover.
+   That path is what made KaTeX hover feel sticky. */
 
 .math-item-preview {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  /* overflow:auto creates a scrollable layer that reflows on every hover paint;
+     clip keeps glyphs inside without a scrollport. */
+  overflow: hidden;
   font-size: 13px;
   margin-bottom: 4px;
   padding: 2px 0;
   pointer-events: none !important;
-  scrollbar-width: thin;
+  /* Keep KaTeX subtree from participating in hit-testing / hover invalidation. */
+  contain: layout style paint;
 }
 
 .math-item-preview * {
   pointer-events: none !important;
+}
+
+.math-item-preview .katex {
+  /* Prevent KaTeX from expanding the card and causing sibling reflow */
+  max-width: 100%;
+  font-size: 1.05em;
 }
 
 .math-item-preview .katex-display {
@@ -1444,6 +1506,8 @@ code[class*="language-"] {
 }
 
 .math-item-label {
+  position: relative;
+  z-index: 1;
   font-size: 11px;
   color: var(--text-secondary);
   text-align: center;
@@ -7322,22 +7386,57 @@ const safeStorage = {
     }
 
     // Math Cheatsheet Drawer Init
+    //
+    // Hover jank root causes this panel used to hit:
+    // 1) Each card embeds a deep KaTeX DOM tree. Changing card background/border
+    //    on :hover forced the browser to repaint every nested .katex span.
+    // 2) Tab switches rebuilt the grid via innerHTML, thrashing layout + style.
+    // 3) modal-overlay backdrop-filter:blur kept a full-viewport blur layer live
+    //    while the pointer moved across cards.
+    // Fix strategy: paint hover via a cheap ::before overlay (opacity only),
+    // keep every tab panel mounted and toggle visibility, mount panels once,
+    // and never touch KaTeX markup after first render.
     initMathCheatsheet() {
       const container = document.getElementById('mathCheatsheetContainer');
       const tabsContainer = document.getElementById('mathTabsContainer');
       if (!container || !tabsContainer || typeof LuoguMathLibrary === 'undefined') return;
 
+      // Idempotent: autoInit may fire more than once (DOMContentLoaded + load).
+      // Re-running must not duplicate tab buttons or KaTeX panels.
+      if (this._mathCheatsheetInited) {
+        if (!this._mathCheatsheetBuilt) this.prefetchMathCheatsheet();
+        return;
+      }
+      this._mathCheatsheetInited = true;
+
       this.mathTabCache = {};
+      this.mathTabPanels = {};
+      this.mathActiveTab = -1;
+      this._mathCheatsheetBuilt = false;
 
       // Render the tab buttons only (cheap, no KaTeX) so the drawer stays usable.
       tabsContainer.innerHTML = '';
       LuoguMathLibrary.forEach((category, idx) => {
         const btn = document.createElement('button');
+        btn.type = 'button';
         btn.className = `math-tab-btn ${idx === 0 ? 'active' : ''}`;
+        btn.dataset.mathTab = String(idx);
         btn.innerText = category.category;
-        btn.onclick = () => this.switchMathTab(idx);
+        btn.addEventListener('click', () => this.switchMathTab(idx));
         tabsContainer.appendChild(btn);
       });
+
+      // Single delegated click handler for all formula cards (avoids N inline
+      // onclick attributes and re-binding on every tab switch).
+      if (!container._mathClickBound) {
+        container.addEventListener('click', (e) => {
+          const card = e.target && e.target.closest ? e.target.closest('.math-item-card') : null;
+          if (!card || !container.contains(card)) return;
+          const code = card.getAttribute('data-code');
+          if (code != null) this.insertMathSymbol(code);
+        });
+        container._mathClickBound = true;
+      }
 
       // Build the active tab synchronously so the drawer is never empty on open,
       // then pre-warm every remaining tab in idle time so switching stays instant.
@@ -7347,72 +7446,121 @@ const safeStorage = {
 
     _scheduleIdle(fn) {
       if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(fn, { timeout: 800 });
+        requestIdleCallback(fn, { timeout: 1200 });
       } else {
         setTimeout(fn, 0);
       }
     }
 
-    // Build a tab's HTML string (no DOM writes). Rendering KaTeX per card is the
-    // expensive part; doing it here keeps it off the interactive path.
-    buildMathTabHTML(tabIdx) {
+    // Build a tab panel element once. KaTeX is only rendered here — never again
+    // on hover / tab switch / modal open.
+    buildMathTabPanel(tabIdx) {
       const category = LuoguMathLibrary[tabIdx];
-      if (!category) return '';
+      if (!category) return null;
+
+      const panel = document.createElement('div');
+      panel.className = 'math-tab-panel';
+      panel.dataset.mathTab = String(tabIdx);
+      panel.hidden = true;
 
       const isMatrixOrComplex = tabIdx === 4 || category.items.some(it => it.isWide);
-      let html = `<div class="math-grid ${isMatrixOrComplex ? 'math-grid-wide' : ''}">`;
+      const grid = document.createElement('div');
+      grid.className = `math-grid${isMatrixOrComplex ? ' math-grid-wide' : ''}`;
 
-      category.items.forEach(item => {
-        let previewRender = escapeHtml(item.label);
-        const katexLib = typeof katex !== 'undefined' ? katex : (window.katex || null);
+      const katexLib = typeof katex !== 'undefined' ? katex : (window.katex || null);
+      // Reuse one options object — KaTeX doesn't mutate it.
+      const katexOpts = { throwOnError: false, displayMode: false, output: 'html' };
+
+      // DocumentFragment batches appends into a single layout pass.
+      const frag = document.createDocumentFragment();
+
+      for (let i = 0; i < category.items.length; i++) {
+        const item = category.items[i];
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = item.isWide ? 'math-item-card card-wide' : 'math-item-card';
+        card.setAttribute('data-code', item.code);
+        card.setAttribute('title', item.desc || item.label || '');
+
+        const preview = document.createElement('div');
+        preview.className = 'math-item-preview';
+
+        let rendered = false;
         if (katexLib) {
           try {
-            // Render pure HTML without heavy MathML trees for maximum speed
-            const cleanCode = item.code.replace(/^\$\$\n?|\n?\$\$$|^\$|\$$/g, '');
-            const isDisplay = cleanCode.includes('\\begin') || cleanCode.includes('\\sum') || cleanCode.includes('\\int') || cleanCode.includes('\\frac') || cleanCode.includes('\\displaystyle');
-            const rendered = katexLib.renderToString(cleanCode, {
-              throwOnError: false,
-              displayMode: isDisplay,
-              output: 'html'
-            });
-            previewRender = rendered;
+            // Strip surrounding $ / $$ so KaTeX sees pure TeX source.
+            const cleanCode = String(item.code).replace(/^\$\$\n?|\n?\$\$$|^\$|\$$/g, '');
+            // Keep every cheatsheet preview in inline mode: displayMode KaTeX
+            // trees are much deeper and force larger paint rects on hover.
+            katexOpts.displayMode = false;
+            preview.innerHTML = katexLib.renderToString(cleanCode, katexOpts);
+            rendered = true;
           } catch (e) {
-            previewRender = escapeHtml(item.label);
+            rendered = false;
           }
         }
+        if (!rendered) {
+          preview.textContent = item.label || item.code || '';
+        }
 
-        const wideClass = item.isWide ? ' card-wide' : '';
+        const label = document.createElement('div');
+        label.className = 'math-item-label';
+        label.textContent = item.label || '';
 
-        html += `
-          <div class="math-item-card${wideClass}" onclick="LuoguEditor.insertMathSymbol('${escapeJsString(item.code)}')">
-            <div class="math-item-preview">${previewRender}</div>
-            <div class="math-item-label">${escapeHtml(item.label)}</div>
-          </div>
-        `;
-      });
-      html += '</div>';
-      return html;
+        card.appendChild(preview);
+        card.appendChild(label);
+        frag.appendChild(card);
+      }
+
+      grid.appendChild(frag);
+      panel.appendChild(grid);
+      return panel;
     }
 
-    // Pre-build every tab into the cache across idle slices so a tab switch is an
-    // instant cached innerHTML swap instead of a synchronous KaTeX render batch.
+    // Ensure a tab panel exists in the DOM (built at most once).
+    ensureMathTabPanel(tabIdx) {
+      const container = document.getElementById('mathCheatsheetContainer');
+      if (!container || typeof LuoguMathLibrary === 'undefined') return null;
+
+      if (!this.mathTabPanels) this.mathTabPanels = {};
+      if (this.mathTabPanels[tabIdx]) return this.mathTabPanels[tabIdx];
+
+      const panel = this.buildMathTabPanel(tabIdx);
+      if (!panel) return null;
+      container.appendChild(panel);
+      this.mathTabPanels[tabIdx] = panel;
+      // Keep a light string cache marker so prefetch knows the tab is done.
+      if (!this.mathTabCache) this.mathTabCache = {};
+      this.mathTabCache[tabIdx] = true;
+      return panel;
+    }
+
+    // Pre-build remaining tabs across idle slices so a later switch is O(1)
+    // visibility toggle — no KaTeX, no innerHTML, no layout thrash.
     prefetchMathCheatsheet() {
       if (typeof LuoguMathLibrary === 'undefined') return;
-      if (!this.mathTabCache) this.mathTabCache = {};
+      if (!this.mathTabPanels) this.mathTabPanels = {};
 
       let cursor = 0;
-      const step = () => {
+      const step = (deadline) => {
+        // Prefer building one tab per idle slice so we never block input/hover.
+        const hasTime = () => {
+          if (!deadline || typeof deadline.timeRemaining !== 'function') return true;
+          return deadline.timeRemaining() > 8;
+        };
         let built = 0;
-        const MAX_PER_SLICE = 2;
-        while (cursor < LuoguMathLibrary.length && built < MAX_PER_SLICE) {
+        const MAX_PER_SLICE = 1;
+        while (cursor < LuoguMathLibrary.length && built < MAX_PER_SLICE && hasTime()) {
           const idx = cursor++;
-          if (this.mathTabCache[idx] === undefined) {
-            this.mathTabCache[idx] = this.buildMathTabHTML(idx);
+          if (!this.mathTabPanels[idx]) {
+            this.ensureMathTabPanel(idx);
             built++;
           }
         }
         if (cursor < LuoguMathLibrary.length) {
           this._scheduleIdle(step);
+        } else {
+          this._mathCheatsheetBuilt = true;
         }
       };
       this._scheduleIdle(step);
@@ -7420,19 +7568,31 @@ const safeStorage = {
 
     switchMathTab(tabIdx) {
       const container = document.getElementById('mathCheatsheetContainer');
-      const tabs = document.querySelectorAll('.math-tab-btn');
-      tabs.forEach((t, i) => t.classList.toggle('active', i === tabIdx));
-
+      const tabsContainer = document.getElementById('mathTabsContainer');
       if (!container || typeof LuoguMathLibrary === 'undefined') return;
-
-      if (!this.mathTabCache) this.mathTabCache = {};
-
-      // Use the cached tab HTML when available (built asynchronously by the
-      // prefetch, or synchronously on first use), then just swap it in.
-      if (this.mathTabCache[tabIdx] === undefined) {
-        this.mathTabCache[tabIdx] = this.buildMathTabHTML(tabIdx);
+      if (tabIdx === this.mathActiveTab && this.mathTabPanels && this.mathTabPanels[tabIdx]) {
+        // Still sync tab button active state (e.g. first open).
+        if (tabsContainer) {
+          const buttons = tabsContainer.querySelectorAll('.math-tab-btn');
+          buttons.forEach((t, i) => t.classList.toggle('active', i === tabIdx));
+        }
+        return;
       }
-      container.innerHTML = this.mathTabCache[tabIdx];
+
+      if (tabsContainer) {
+        const buttons = tabsContainer.querySelectorAll('.math-tab-btn');
+        buttons.forEach((t, i) => t.classList.toggle('active', i === tabIdx));
+      }
+
+      // Hide previously active panel without destroying its KaTeX DOM.
+      if (this.mathTabPanels && this.mathActiveTab >= 0) {
+        const prev = this.mathTabPanels[this.mathActiveTab];
+        if (prev) prev.hidden = true;
+      }
+
+      const panel = this.ensureMathTabPanel(tabIdx);
+      if (panel) panel.hidden = false;
+      this.mathActiveTab = tabIdx;
     }
 
     insertMathSymbol(code) {
@@ -7445,6 +7605,11 @@ const safeStorage = {
     openModal(modalId) {
       if (modalId === 'linterModal') {
         this.updateLinterReport();
+      }
+      // Warm the cheatsheet the moment the user opens it, in case idle prefetch
+      // hasn't finished yet — still only builds missing tabs, never rebuilds.
+      if (modalId === 'mathModal' && !this._mathCheatsheetBuilt) {
+        this.prefetchMathCheatsheet();
       }
       const modal = document.getElementById(modalId);
       if (modal) modal.classList.add('active');

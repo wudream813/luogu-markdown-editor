@@ -1217,8 +1217,9 @@ code[class*="language-"] {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(2px);
+  /* Solid dim only — backdrop-filter:blur forces a full-viewport backdrop
+     repaint on every hover style change inside the dialog (esp. KaTeX cards). */
+  background: rgba(0, 0, 0, 0.48);
   z-index: 10000;
   align-items: center;
   justify-content: center;
@@ -1334,7 +1335,10 @@ code[class*="language-"] {
   margin-top: 4px;
 }
 
-/* Formula Drawer Grid - 0ms instant response without lag */
+/* Formula Drawer Grid
+   Hover must stay GPU-cheap: KaTeX trees are deep, so never change the card's
+   own background/border on :hover (that invalidates paint for every nested
+   span). Instead, fade a single ::before overlay via opacity only. */
 .math-tabs {
   display: flex;
   gap: 6px;
@@ -1342,6 +1346,8 @@ code[class*="language-"] {
   margin-bottom: 16px;
   overflow-x: auto;
   padding-bottom: 6px;
+  /* Isolate tab strip repaints from the formula grid below. */
+  contain: layout style;
 }
 
 .math-tab-btn {
@@ -1354,12 +1360,22 @@ code[class*="language-"] {
   border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
+  transition: none;
 }
 
 .math-tab-btn.active {
   background: var(--luogu-blue-light);
   color: var(--luogu-blue);
   font-weight: 600;
+}
+
+/* Panels stay mounted; only [hidden] toggles. Avoids re-parsing KaTeX HTML. */
+.math-tab-panel {
+  display: block;
+}
+
+.math-tab-panel[hidden] {
+  display: none !important;
 }
 
 .math-grid {
@@ -1374,6 +1390,12 @@ code[class*="language-"] {
 }
 
 .math-item-card {
+  /* <button> reset — cards are real buttons for a11y + no inline onclick */
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
+  text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1387,36 +1409,76 @@ code[class*="language-"] {
   max-width: 100%;
   overflow: hidden;
   box-sizing: border-box;
+  position: relative;
+  /* Isolate each card so hover compositing never dirties siblings. */
   contain: layout style paint;
   transition: none !important;
+}
+
+/* Hover highlight is a separate overlay layer — only its opacity changes. */
+.math-item-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  /* 1px inset ring + fill without touching the card's own border/background */
+  box-shadow: inset 0 0 0 1px var(--luogu-blue);
+  background: var(--luogu-blue-light);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  /* opacity-only = compositor-friendly, no layout/paint of KaTeX children */
+  transition: opacity 0.06s linear;
+}
+
+.math-item-card:hover::before,
+.math-item-card:focus-visible::before {
+  opacity: 0.92;
+}
+
+.math-item-card:focus {
+  outline: none;
+}
+
+.math-item-card:focus-visible {
+  outline: 2px solid var(--luogu-blue);
+  outline-offset: 1px;
 }
 
 .math-item-card.card-wide {
   grid-column: span 2;
 }
 
-.math-item-card:hover {
-  border-color: #3498db !important;
-  background-color: var(--luogu-blue-light) !important;
-}
+/* IMPORTANT: do NOT change background/border on the card itself on :hover.
+   That path is what made KaTeX hover feel sticky. */
 
 .math-item-preview {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
+  /* overflow:auto creates a scrollable layer that reflows on every hover paint;
+     clip keeps glyphs inside without a scrollport. */
+  overflow: hidden;
   font-size: 13px;
   margin-bottom: 4px;
   padding: 2px 0;
   pointer-events: none !important;
-  scrollbar-width: thin;
+  /* Keep KaTeX subtree from participating in hit-testing / hover invalidation. */
+  contain: layout style paint;
 }
 
 .math-item-preview * {
   pointer-events: none !important;
+}
+
+.math-item-preview .katex {
+  /* Prevent KaTeX from expanding the card and causing sibling reflow */
+  max-width: 100%;
+  font-size: 1.05em;
 }
 
 .math-item-preview .katex-display {
@@ -1425,6 +1487,8 @@ code[class*="language-"] {
 }
 
 .math-item-label {
+  position: relative;
+  z-index: 1;
   font-size: 11px;
   color: var(--text-secondary);
   text-align: center;
