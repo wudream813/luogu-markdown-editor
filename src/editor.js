@@ -1146,29 +1146,37 @@ const safeStorage = {
       font-family: Consolas, Monaco, "Cascadia Code", monospace;
       font-size: 13px;
       line-height: 1.6;
-      overflow-x: auto;
+      /* Each .code-line is its own horizontal scroll container, so the <pre>
+         itself must NOT scroll; otherwise the gutter line number would be
+         carried off-screen by a long line. */
+      overflow-x: visible !important;
+      width: 100%;
+      box-sizing: border-box;
     }
     /* Use plain block flow, not flexbox, so lines stack reliably in older embedded
        WebView engines as well as modern browsers. (With display:flex the divs fall
        back to inline and every line collapses onto one row.) */
-    .code-line { display: block; padding: 0 16px; min-height: 21px; }
+    .code-line { display: block; overflow-x: auto; white-space: pre; padding: 0 16px; min-width: 100%; width: 100%; box-sizing: border-box; }
     .code-line-number {
       display: inline-block;
+      position: sticky;
+      left: 0;
       width: 36px;
+      min-width: 36px;
       padding-right: 14px;
       margin-right: 10px;
       text-align: right;
       color: #64748b;
+      background: var(--code-bg);
       border-right: 1px solid rgba(255, 255, 255, 0.1);
       user-select: none;
       vertical-align: top;
+      z-index: 2;
     }
     .code-line-text {
       display: inline;
-      white-space: pre-wrap;
+      white-space: pre;
       vertical-align: top;
-      overflow-wrap: anywhere;
-      word-break: break-all;
     }
     .code-line-highlighted {
       background: rgba(234, 179, 8, 0.15);

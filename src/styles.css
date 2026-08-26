@@ -719,9 +719,7 @@ html, body {
 .luogu-code-pre code[class*="language-"],
 .luogu-code-pre pre[class*="language-"],
 pre[class*="language-"],
-code[class*="language-"],
-.code-line,
-.code-line-text {
+code[class*="language-"] {
   white-space: pre-wrap !important;
   word-break: break-all !important;
   word-wrap: break-word !important;
@@ -820,7 +818,7 @@ code[class*="language-"],
      gets carried off-screen when the whole <pre> scrolls" issue. */
   display: block !important;
   overflow-x: auto;
-  white-space: pre;
+  white-space: pre !important;
   padding: 0 16px;
   min-width: 100%;
   width: 100%;
