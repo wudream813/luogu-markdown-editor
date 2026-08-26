@@ -823,45 +823,50 @@ code[class*="language-"],
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
-  overflow-x: auto;
+  /* Per-line horizontal scrolling is used so the gutter line number stays fixed on
+     the left while a long code line scrolls; the <pre> itself does not scroll. */
+  overflow-x: visible !important;
   width: 100%;
   box-sizing: border-box;
   display: block !important;
 }
 
 .code-line {
-  /* Use a table row layout, not flexbox. The Windows desktop app uses an embedded
-     WebView that lacks flexbox support — with display:flex the divs fall back to
-     inline and lines collapse onto one row ("1#include...2..."). A table layout
-     also keeps the gutter line number exactly top-aligned with its code line
-     (no baseline offset), and it stacks rows reliably in legacy WebView too. */
-  display: table !important;
-  table-layout: auto;
-  border-collapse: collapse;
+  /* Each line is its own horizontal scroll container. The gutter line number is
+     position:sticky left, so when a long code line overflows only the code text
+     scrolls — the number stays pinned on the left and every row stays aligned.
+     This avoids both the flexbox collapse in legacy WebViews and the "line number
+     gets carried off-screen when the whole <pre> scrolls" issue. */
+  display: block !important;
+  overflow-x: auto;
+  white-space: pre;
   padding: 0 16px;
+  min-width: 100%;
   width: 100%;
   box-sizing: border-box;
 }
 
 .code-line-number {
-  display: table-cell !important;
+  display: inline-block !important;
+  position: sticky;
+  left: 0;
   width: 36px;
   min-width: 36px;
   padding-right: 14px;
   margin-right: 10px;
   text-align: right;
   color: #5c6370;
+  background: #282c34;
   border-right: 1px solid #3e4451;
   user-select: none;
   vertical-align: top;
+  z-index: 2;
 }
 
 .code-line-text {
-  /* Code text beside the gutter. Keep each code line on a single row (no wrapping,
-     white-space: pre) so the line number stays aligned to its own line; long lines
-     are handled by horizontal scroll on .luogu-code-pre. Prevents the "line number
-     fans out across many wrapped child rows" misalignment on narrow panes. */
-  display: table-cell !important;
+  /* Code text beside the gutter, kept on a single row (no wrapping) so it aligns
+     to its own line number; long lines scroll horizontally within the line. */
+  display: inline !important;
   vertical-align: top;
   white-space: pre !important;
   word-break: normal !important;
