@@ -56,6 +56,14 @@ const safeStorage = {
     }
 
     init() {
+      // The parser already highlights code blocks itself via prismLib.highlight().
+      // Disable Prism's automatic highlight-on-DOMContentLoaded, otherwise it re-tokenizes
+      // the already-rendered <code class="language-..."> and flattens the .code-line rows
+      // into a single line of inline tokens (the "1#include <iostream>2..." bug).
+      if (typeof Prism !== 'undefined') {
+        Prism.manual = true;
+      }
+
       this.textarea = document.getElementById('editorTextarea');
       this.previewEl = document.getElementById('previewContent');
       this.gutterEl = document.getElementById('lineNumbersGutter');
