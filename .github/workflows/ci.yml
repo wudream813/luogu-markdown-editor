@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run parser test suite
+        run: node --test test/
+
+      - name: Build the standalone single-file editor
+        run: |
+          node build-standalone.js
+          test -f LuoguMarkdownEditor.html
+          echo "Built $(wc -c < LuoguMarkdownEditor.html) bytes."
+
+      - name: Artifact must be fully self-contained
+        run: |
+          if grep -qn 'src="src/\|href="src/\|src="assets/\|href="assets/' LuoguMarkdownEditor.html; then
+            echo "::error::Artifact still references external files; it would break offline."
+            exit 1
+          fi
+          echo "No unresolved external references."
+
+      - name: Check for external CDN references
+        run: |
+          if grep -rn "cdn\.jsdelivr\|unpkg\.com\|cdnjs\.cloudflare" index.html src/; then
+            echo "::error::Found an external CDN reference; the app must stay fully offline."
+            exit 1
+          fi
+          echo "No external CDN references."
+
+      - name: index.html must stay a thin shell
+        run: |
+          # The dev shell is plain markup that references src/ and assets/. If a huge
+          # inlined blob creeps back in, the two HTML files can silently drift apart
+          # again (which is exactly how index.html ended up shipping a stale parser).
+          size=$(wc -c < index.html)
+          echo "index.html is $size bytes"
+          if [ "$size" -gt 200000 ]; then
+            echo "::error::index.html is $size bytes - it should reference src/ and assets/, not inline them."
+            exit 1
+          fi
+          if grep -qi "@font-face" index.html; then
+            echo "::error::index.html contains inlined font CSS; it must link assets/katex/katex.min.css instead."
+            exit 1
+          fi
+
+      - name: Build must be idempotent
+        run: |
+          node build-standalone.js
+          a=$(md5sum LuoguMarkdownEditor.html | cut -d' ' -f1)
+          node build-standalone.js
+          b=$(md5sum LuoguMarkdownEditor.html | cut -d' ' -f1)
+          if [ "$a" != "$b" ]; then
+            echo "::error::build-standalone.js is not idempotent ($a vs $b)."
+            exit 1
+          fi
+          echo "Build is idempotent."
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax-check the launcher
+        run: python -m py_compile app.py
+      - name: Ensure the server does not bind all interfaces
+        run: |
+          if grep -n '"0\.0\.0\.0"\|'"'"'0\.0\.0\.0'"'"'' app.py; then
+            echo "::error::app.py must bind to loopback only."
+            exit 1
+          fi
+          echo "Launcher binds to loopback only."

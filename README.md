@@ -38,9 +38,12 @@
    - 🌓 **双向精准同步滚动**：编辑区与预览区智能同步，长文排版不迷失。
    - ⚡ **洛谷排版规范检查与一键修复**：内置排版规范 Linter 与盘古算法，一键在汉字与英文、数字、LaTeX 公式之间添加规范空格，检测公式包裹完整度与代码块语言。
    - 📑 **洛谷官方预设模板库**：内置洛谷全特性演示、符合审核规范的标准题解模板、题目题面模板、学术专栏模板。
-   - 💾 **本地自动保存与历史回滚**：实时持久化至本地存储，支持撤销/重做（`Ctrl+Z`/`Ctrl+Y`），防丢稿机制。
+   - 💾 **本地自动保存与历史回滚**：实时持久化至本地存储，支持撤销/重做（`Ctrl+Z`/`Ctrl+Y`），撤销后光标自动回到编辑位置；保存失败（如存储空间不足）会明确告警而非静默丢稿。
    - 📤 **多格式导出**：一键复制洛谷 Markdown 源码、导出独立单文件 HTML（离线可用）、打印/导出为 PDF。
    - 🎨 **多套精致主题**：洛谷官方经典蓝白风、暗夜黑客主题、学术纯白极简风。
+   - 📱 **移动端适配**：窄屏下双栏自动纵向堆叠，支持触屏操作。
+   - 🔒 **安全渲染**：预览区对 URL 协议做白名单校验并转义原始 HTML，粘贴他人题解不会被 XSS 攻击。
+   - 🚀 **线性渲染性能**：解析器为 O(n) 复杂度，360KB 长文档渲染约 150ms。
 
 ---
 
@@ -49,7 +52,9 @@
 本项目提供三种运行方式，均完全开箱即用：
 
 ### 方式一：单文件免安装离线版（最轻量、推荐）
-- 直接双击目录下的 **`LuoguMarkdownEditor.html`** 文件。
+- 前往本仓库的 **[Releases](https://github.com/wudream813/luogu-markdown-editor/releases)** 页面，
+  下载 **`LuoguMarkdownEditor.html`**，双击即可打开。
+- 若想自行构建：克隆仓库后执行 `node build-standalone.js`，产物即为该文件。
 - 会在您默认的浏览器（如 Microsoft Edge / Google Chrome）中以单文件纯离线方式打开，无任何依赖，体积仅 ~580KB，所有 KaTeX、代码高亮、排版引擎均已内嵌！
 
 ### 方式二：Windows 快捷启动脚本
@@ -145,3 +150,48 @@ int main() {
 居中内容
 :::
 \`\`\`
+
+
+---
+
+## 🛠️ 开发
+
+```bash
+node --test test/          # 运行解析器测试套件
+node build-standalone.js   # 构建单文件离线版
+python3 app.py             # 启动本地服务（仅绑定 127.0.0.1）
+```
+
+### 项目结构
+
+```
+index.html                 开发用薄壳：纯 HTML 结构，通过 <link>/<script> 引用真实源码
+src/                       样式与逻辑（styles.css, luogu-parser.js, editor.js …）
+assets/                    第三方依赖本地副本（KaTeX, Prism 及字体）
+build-standalone.js        构建脚本：内联全部资源，产出单文件版
+LuoguMarkdownEditor.html   构建产物（不提交版本库，见 Releases）
+```
+
+数据流是**单向**的：
+
+```
+index.html + src/** + assets/**  ──build──▶  LuoguMarkdownEditor.html
+```
+
+日常开发**直接改 `src/`，然后刷新 `index.html` 即可**，无需每次构建。
+只有发布时才需要跑 `node build-standalone.js`。
+
+> 历史说明：早期 `index.html` 本身就是一份 928KB 的全内联文件，构建脚本读它、改它、
+> 再写回去，既是输入又是输出。结果两份 HTML 悄悄脱节（`index.html` 一度仍在使用旧版
+> 解析器），而且改一行 CSS 就会产生 928KB 的 diff。现在 `index.html` 只有 42KB。
+
+### 安全说明
+
+预览区通过 `innerHTML` 注入渲染结果，因此解析器承担净化职责：
+
+- URL 仅允许 `http(s):` / `mailto:` / `ftp:` / `tel:` / 锚点 / 相对路径，其余（如
+  `javascript:`、`data:`、`vbscript:`）一律替换为 `#`；比对前会剥离控制字符，
+  防止 `java\tscript:` 之类的绕过。
+- 原始 HTML 标签一律转义。这既堵住 XSS，也更贴近洛谷真实行为——洛谷本身不渲染
+  任意 HTML。
+- Bilibili 播放器采用点击后加载，未点击时不会向 bilibili.com 发起任何请求。

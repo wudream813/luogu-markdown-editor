@@ -1183,6 +1183,54 @@ code[class*="language-"] {
   border: none;
 }
 
+/* Click-to-load placeholder shown in place of the Bilibili iframe. Keeps the app
+   fully offline (and free of third-party trackers) until the user opts in. */
+.luogu-bilibili-facade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  background: #111827;
+  color: #e5e7eb;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.luogu-bilibili-facade:hover {
+  background: #1f2937;
+}
+
+.luogu-bilibili-facade:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: -2px;
+}
+
+.luogu-bilibili-play-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #fb7299;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.luogu-bilibili-play-icon svg {
+  width: 28px;
+  height: 28px;
+  margin-left: 3px;
+}
+
 /* KaTeX Formulas */
 .luogu-math-display {
   margin: 1.2em 0;
@@ -1882,5 +1930,123 @@ code[class*="language-"] {
   .luogu-math-display {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+}
+
+/* ==========================================================================
+   Auto-save failure indicator
+   ========================================================================== */
+.save-failed {
+  color: #dc2626 !important;
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Responsive / mobile layout
+   --------------------------------------------------------------------------
+   The stylesheet previously contained no width breakpoints at all, so the
+   fixed two-column workspace and the 6px drag handle were unusable on a phone
+   — a real scenario for reading problems and touching up solutions on the go.
+   On narrow screens the panes stack and the existing view-mode classes
+   (.mode-editor-only / .mode-preview-only) become the primary way to switch.
+   ========================================================================== */
+@media (max-width: 900px) {
+  .main-workspace {
+    flex-direction: column;
+    height: auto;
+    min-height: calc(100vh - var(--header-height) - var(--toolbar-height) - var(--statusbar-height));
+  }
+
+  /* Inline flex percentages are set by the splitter drag; neutralise them. */
+  .editor-pane,
+  .preview-pane {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 50vh;
+  }
+
+  /* Dragging a vertical divider makes no sense in a stacked layout. */
+  .split-resizer {
+    display: none !important;
+  }
+
+  /* When a single pane is selected, let it use the full viewport. */
+  .mode-editor-only .editor-pane,
+  .mode-preview-only .preview-pane {
+    height: calc(100vh - var(--header-height) - var(--toolbar-height) - var(--statusbar-height));
+  }
+
+  .toolbar-container {
+    flex-wrap: wrap;
+    height: auto;
+    row-gap: 4px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .app-header {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+}
+
+@media (max-width: 600px) {
+  /* Reclaim vertical space: on a phone the header + toolbar otherwise consumed
+     over a third of the viewport before any content was visible. */
+  .app-header {
+    padding: 4px 8px;
+  }
+
+  .toolbar-container {
+    padding: 2px 6px;
+    row-gap: 2px;
+    column-gap: 2px;
+  }
+
+  .toolbar-group {
+    gap: 2px;
+  }
+
+  .editor-pane,
+  .preview-pane {
+    height: 50vh;
+  }
+
+  /* Comfortable touch targets while staying compact. */
+  .toolbar-container button,
+  .pane-header button {
+    min-width: 36px;
+    min-height: 36px;
+    padding: 4px 6px;
+  }
+
+  /* The editor is the primary surface on a phone; keep the app header from
+     wrapping into several tall rows. */
+  .app-header .header-title-group {
+    flex: 1 1 100%;
+  }
+
+  /* Secondary chrome costs too much room on a phone. */
+  .toolbar-divider {
+    display: none;
+  }
+
+  .luogu-table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Respect users who ask for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

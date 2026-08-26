@@ -1,0 +1,59 @@
+name: Release
+
+# Builds the single-file offline editor and attaches it to a GitHub Release.
+# The artifact is not committed to the repository, so this workflow is the
+# canonical way users obtain LuoguMarkdownEditor.html.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run tests before publishing
+        run: node --test test/
+
+      - name: Build the single-file editor
+        run: node build-standalone.js
+
+      - name: Verify the artifact is self-contained
+        run: |
+          if grep -qn 'src="src/\|href="src/\|src="assets/\|href="assets/' LuoguMarkdownEditor.html; then
+            echo "::error::Artifact still references external files."
+            exit 1
+          fi
+          if grep -qn "cdn\.jsdelivr\|unpkg\.com\|cdnjs\.cloudflare" LuoguMarkdownEditor.html; then
+            echo "::error::Artifact contains an external CDN reference."
+            exit 1
+          fi
+          echo "Artifact is fully self-contained ($(wc -c < LuoguMarkdownEditor.html) bytes)."
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LuoguMarkdownEditor
+          path: LuoguMarkdownEditor.html
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LuoguMarkdownEditor.html
+          body: |
+            ## 洛谷 Markdown 编辑器 ${{ github.ref_name }}
+
+            下载下方的 **LuoguMarkdownEditor.html**，双击即可在浏览器中使用。
+            单文件、完全离线，无需安装任何依赖。
