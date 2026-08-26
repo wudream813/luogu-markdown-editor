@@ -4,4 +4,14 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 Thumbs.db
-test-*.js
+
+# Build/scratch output
+*.log
+/tmp/
+__pycache__/
+
+# Build artifact.
+# LuoguMarkdownEditor.html is generated from index.html + src/ + assets/ by
+# `node build-standalone.js`. It is published as a GitHub Release asset rather than
+# committed, so that a one-line source change no longer produces a ~930 KB diff.
+LuoguMarkdownEditor.html

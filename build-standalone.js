@@ -1,65 +1,152 @@
 /**
  * Build the single-file offline `LuoguMarkdownEditor.html`.
  *
- * The repo keeps `index.html` as a fully-inlined single-file build (CSS embedded with
- * base64 fonts, all JS embedded). This script performs an in-place merge:
- *   - swaps the inlined app stylesheet for the current `src/styles.css`
- *   - swaps the inlined Luogu source scripts for the current `src/*.js`
- * so editing the source under `src/` and re-running this script updates the bundled file.
+ * `index.html` is the DEVELOPMENT shell: plain markup that references the real
+ * sources via <link href="..."> and <script src="...">. This script reads that
+ * shell and inlines every referenced asset to produce a self-contained file that
+ * runs from `file://` with no network access.
+ *
+ * The data flows strictly one way:
+ *
+ *     index.html + src/** + assets/**   ->   LuoguMarkdownEditor.html
+ *
+ * The previous version instead rewrote the already-inlined `index.html` in place,
+ * so index.html was both the input and (effectively) an output. That made the two
+ * 928 KB files silently drift apart — index.html was in fact still shipping an old
+ * copy of the parser — and turned a one-line CSS change into a 928 KB diff.
+ *
+ * KaTeX fonts are embedded as base64 data: URIs, reproducing the exact bytes the
+ * hand-inlined build used to contain.
  *
  * Usage: node build-standalone.js [output.html]
  *        default output: LuoguMarkdownEditor.html
  */
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 
 const baseDir = __dirname;
-const outPath = path.join(baseDir, process.argv[2] || 'LuoguMarkdownEditor.html');
+const outPath = path.resolve(baseDir, process.argv[2] || 'LuoguMarkdownEditor.html');
 
-let indexHtml = fs.readFileSync(path.join(baseDir, 'index.html'), 'utf8');
+const FONT_MIME = {
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+};
 
-// ---- 1. Replace the app <style> block (it contains a unique marker comment) ----
-const appCss = fs.readFileSync(path.join(baseDir, 'src/styles.css'), 'utf8');
-const STYLE_MARKER = 'Luogu Markdown + KaTeX Editor - Windows & Web Stylesheet';
-
-function replaceStyleBlock(html, marker, newContent) {
-  const idx = html.indexOf(marker);
-  if (idx === -1) throw new Error('style marker not found: ' + marker);
-  const open = html.lastIndexOf('<style>', idx);
-  if (open === -1) throw new Error('style open tag not found for: ' + marker);
-  const start = open + '<style>'.length;
-  const close = html.indexOf('</style>', start);
-  if (close === -1) throw new Error('style close tag not found for: ' + marker);
-  return html.slice(0, start) + newContent + html.slice(close);
+function read(rel) {
+  const abs = path.join(baseDir, rel);
+  if (!fs.existsSync(abs)) {
+    throw new Error(`referenced asset does not exist: ${rel}`);
+  }
+  return fs.readFileSync(abs, 'utf8');
 }
 
-indexHtml = replaceStyleBlock(indexHtml, STYLE_MARKER, appCss);
+/**
+ * Replace url(...) references in a stylesheet with base64 data: URIs so the
+ * stylesheet carries its own fonts.
+ *
+ * Only woff2 is embedded. Every browser that can run this editor supports woff2,
+ * so also embedding the woff/ttf fallbacks would roughly triple the artifact
+ * (~2.0 MB vs ~0.9 MB) for bytes no browser would ever fetch. The alternative
+ * sources are dropped rather than left as relative paths, because a relative
+ * font URL cannot resolve from a single file opened via file://.
+ */
+function inlineCssAssets(css, cssRelDir) {
+  // Drop non-woff2 alternatives from multi-source `src:` lists first.
+  const withoutFallbacks = css.replace(
+    /,\s*url\([^)]*\.(?:woff|ttf|otf)\)\s*format\((["']?)(?:woff|truetype|opentype)\1\)/gi,
+    ''
+  );
 
-// ---- 2. Replace each inlined Luogu source <script> block (matched by leading comment) ----
-function replaceScriptBlock(html, marker, newContent) {
-  const idx = html.indexOf(marker);
-  if (idx === -1) throw new Error('script marker not found: ' + marker);
-  const open = html.lastIndexOf('<script>', idx);
-  if (open === -1) throw new Error('script open tag not found for: ' + marker);
-  const start = open + '<script>'.length;
-  const close = html.indexOf('</script>', start);
-  if (close === -1) throw new Error('script close tag not found for: ' + marker);
-  return html.slice(0, start) + newContent + html.slice(close);
+  return withoutFallbacks.replace(/url\(([^)]+)\)/g, (match, rawRef) => {
+    const ref = rawRef.trim().replace(/^["']|["']$/g, '');
+    // Already self-contained or remote: leave untouched.
+    if (/^(?:data:|https?:|\/\/)/i.test(ref)) return match;
+
+    const assetRel = path.posix.join(cssRelDir, ref.split('?')[0].split('#')[0]);
+    const assetAbs = path.join(baseDir, assetRel);
+    if (!fs.existsSync(assetAbs)) return match;
+
+    const ext = path.extname(assetAbs).toLowerCase();
+    const mime = FONT_MIME[ext];
+    if (!mime) return match;
+
+    const b64 = fs.readFileSync(assetAbs).toString('base64');
+    return `url("data:${mime};base64,${b64}")`;
+  });
 }
 
-const scripts = [
-  { marker: 'Luogu Markdown + KaTeX Parser & Renderer', file: 'src/luogu-parser.js' },
-  { marker: 'Luogu Markdown Linter & Typography Engine', file: 'src/luogu-linter.js' },
-  { marker: 'KaTeX Formula Assistant & Cheatsheet Library', file: 'src/luogu-math-cheatsheet.js' },
-  { marker: 'Luogu Markdown Preset Templates', file: 'src/luogu-templates.js' },
-  { marker: 'Luogu Markdown Editor Main Controller', file: 'src/editor.js' },
-];
-
-for (const s of scripts) {
-  const content = fs.readFileSync(path.join(baseDir, s.file), 'utf8');
-  indexHtml = replaceScriptBlock(indexHtml, s.marker, content);
+/** Guard against a nested </script> prematurely closing the inlined block. */
+function escapeScript(js) {
+  return js.replace(/<\/script>/gi, '<\\/script>');
 }
 
-fs.writeFileSync(outPath, indexHtml, 'utf8');
-console.log('Rebuilt standalone single-file: ' + outPath +
-  ' (Size: ' + Math.round(indexHtml.length / 1024) + ' KB)');
+function build() {
+  const shellPath = path.join(baseDir, 'index.html');
+  let html = fs.readFileSync(shellPath, 'utf8');
+
+  const inlinedStyles = [];
+  const inlinedScripts = [];
+
+  // ---- Inline <link rel="stylesheet" href="..."> ----
+  html = html.replace(
+    /[ \t]*<link\b[^>]*\brel=["']stylesheet["'][^>]*>/gi,
+    (tag) => {
+      const hrefMatch = tag.match(/\bhref=["']([^"']+)["']/i);
+      if (!hrefMatch) return tag;
+      const href = hrefMatch[1];
+      if (/^(?:https?:)?\/\//i.test(href) || href.startsWith('data:')) {
+        throw new Error(
+          `remote stylesheet in index.html breaks offline mode: ${href}`
+        );
+      }
+      const css = inlineCssAssets(read(href), path.posix.dirname(href));
+      inlinedStyles.push(`${href} (${Math.round(css.length / 1024)} KB)`);
+      return `  <style>${css}</style>`;
+    }
+  );
+
+  // ---- Inline <script src="..."></script> ----
+  html = html.replace(
+    /[ \t]*<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)><\/script>/gi,
+    (tag, pre, src) => {
+      if (/^(?:https?:)?\/\//i.test(src) || src.startsWith('data:')) {
+        throw new Error(`remote script in index.html breaks offline mode: ${src}`);
+      }
+      const js = read(src);
+      inlinedScripts.push(`${src} (${Math.round(js.length / 1024)} KB)`);
+      return `  <script>${escapeScript(js)}</script>`;
+    }
+  );
+
+  // ---- Sanity checks: the artifact must be genuinely self-contained ----
+  const leftoverLink = html.match(/<link\b[^>]*\brel=["']stylesheet["'][^>]*>/i);
+  if (leftoverLink) throw new Error(`un-inlined stylesheet remains: ${leftoverLink[0]}`);
+
+  const leftoverScript = html.match(/<script\b[^>]*\bsrc=["'][^"']+["'][^>]*>/i);
+  if (leftoverScript) throw new Error(`un-inlined script remains: ${leftoverScript[0]}`);
+
+  const remote = html.match(/(?:https?:)?\/\/(?:cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com)[^"')\s]*/i);
+  if (remote) throw new Error(`external CDN reference remains: ${remote[0]}`);
+
+  fs.writeFileSync(outPath, html);
+
+  console.log('Inlined stylesheets:');
+  inlinedStyles.forEach((s) => console.log('  -', s));
+  console.log('Inlined scripts:');
+  inlinedScripts.forEach((s) => console.log('  -', s));
+  console.log(
+    `\nBuilt ${path.relative(baseDir, outPath)} (${Math.round(html.length / 1024)} KB) ` +
+    `from index.html (${Math.round(fs.readFileSync(shellPath, 'utf8').length / 1024)} KB shell)`
+  );
+}
+
+try {
+  build();
+} catch (err) {
+  console.error('Build failed:', err.message);
+  process.exit(1);
+}
