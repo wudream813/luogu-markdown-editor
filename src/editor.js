@@ -651,7 +651,7 @@ const safeStorage = {
 
       this.mathTabCache = {};
 
-      // Render tabs
+      // Render the tab buttons only (cheap, no KaTeX) so the drawer stays usable.
       tabsContainer.innerHTML = '';
       LuoguMathLibrary.forEach((category, idx) => {
         const btn = document.createElement('button');
@@ -661,24 +661,25 @@ const safeStorage = {
         tabsContainer.appendChild(btn);
       });
 
+      // Build the active tab synchronously so the drawer is never empty on open,
+      // then pre-warm every remaining tab in idle time so switching stays instant.
       this.switchMathTab(0);
+      this.prefetchMathCheatsheet();
     }
 
-    switchMathTab(tabIdx) {
-      const container = document.getElementById('mathCheatsheetContainer');
-      const tabs = document.querySelectorAll('.math-tab-btn');
-      tabs.forEach((t, i) => t.classList.toggle('active', i === tabIdx));
-
-      if (!container || typeof LuoguMathLibrary === 'undefined') return;
-
-      // Use cached tab HTML if available for ultra-fast rendering
-      if (this.mathTabCache && this.mathTabCache[tabIdx]) {
-        container.innerHTML = this.mathTabCache[tabIdx];
-        return;
+    _scheduleIdle(fn) {
+      if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(fn, { timeout: 800 });
+      } else {
+        setTimeout(fn, 0);
       }
+    }
 
+    // Build a tab's HTML string (no DOM writes). Rendering KaTeX per card is the
+    // expensive part; doing it here keeps it off the interactive path.
+    buildMathTabHTML(tabIdx) {
       const category = LuoguMathLibrary[tabIdx];
-      if (!category) return;
+      if (!category) return '';
 
       const isMatrixOrComplex = tabIdx === 4 || category.items.some(it => it.isWide);
       let html = `<div class="math-grid ${isMatrixOrComplex ? 'math-grid-wide' : ''}">`;
@@ -712,10 +713,48 @@ const safeStorage = {
         `;
       });
       html += '</div>';
+      return html;
+    }
+
+    // Pre-build every tab into the cache across idle slices so a tab switch is an
+    // instant cached innerHTML swap instead of a synchronous KaTeX render batch.
+    prefetchMathCheatsheet() {
+      if (typeof LuoguMathLibrary === 'undefined') return;
+      if (!this.mathTabCache) this.mathTabCache = {};
+
+      let cursor = 0;
+      const step = () => {
+        let built = 0;
+        const MAX_PER_SLICE = 2;
+        while (cursor < LuoguMathLibrary.length && built < MAX_PER_SLICE) {
+          const idx = cursor++;
+          if (this.mathTabCache[idx] === undefined) {
+            this.mathTabCache[idx] = this.buildMathTabHTML(idx);
+            built++;
+          }
+        }
+        if (cursor < LuoguMathLibrary.length) {
+          this._scheduleIdle(step);
+        }
+      };
+      this._scheduleIdle(step);
+    }
+
+    switchMathTab(tabIdx) {
+      const container = document.getElementById('mathCheatsheetContainer');
+      const tabs = document.querySelectorAll('.math-tab-btn');
+      tabs.forEach((t, i) => t.classList.toggle('active', i === tabIdx));
+
+      if (!container || typeof LuoguMathLibrary === 'undefined') return;
 
       if (!this.mathTabCache) this.mathTabCache = {};
-      this.mathTabCache[tabIdx] = html;
-      container.innerHTML = html;
+
+      // Use the cached tab HTML when available (built asynchronously by the
+      // prefetch, or synchronously on first use), then just swap it in.
+      if (this.mathTabCache[tabIdx] === undefined) {
+        this.mathTabCache[tabIdx] = this.buildMathTabHTML(tabIdx);
+      }
+      container.innerHTML = this.mathTabCache[tabIdx];
     }
 
     insertMathSymbol(code) {

@@ -18,6 +18,40 @@
       .replace(/'/g, '&#39;');
   }
 
+  // KaTeX rendering is deterministic for a given formula + options, so memoize
+  // the rendered markup. Documents repeat formulas heavily (and unchanged lines
+  // re-render on every edit), so this avoids re-tokenizing / rebuilding the DOM
+  // tree for identical formulas across render() calls — cutting the main-thread
+  // cost of the live preview, which was the main source of typing lag.
+  const _katexRenderCache = new Map();
+  const _katexRenderCacheMax = 4000;
+  function renderKatexCached(katexLib, formula, optsKey, opts, fallback) {
+    // The key MUST include the formula, otherwise two different formulas that
+    // share the same options (e.g. two inline equations) would collide and the
+    // second would silently render as the first.
+    const key = formula + '\u0001' + optsKey;
+    const hit = _katexRenderCache.get(key);
+    if (hit !== undefined) {
+      // Move to the back to reflect most-recent use (simple LRU).
+      _katexRenderCache.delete(key);
+      _katexRenderCache.set(key, hit);
+      return hit;
+    }
+    let rendered;
+    try {
+      rendered = katexLib.renderToString(formula, opts);
+    } catch (e) {
+      // Let the caller provide an error span.
+      return fallback(e);
+    }
+    _katexRenderCache.set(key, rendered);
+    if (_katexRenderCache.size > _katexRenderCacheMax) {
+      const oldest = _katexRenderCache.keys().next().value;
+      _katexRenderCache.delete(oldest);
+    }
+    return rendered;
+  }
+
   // Parse highlighted line specifications, e.g. "lines=5-6", "lines=1,3,5-7"
   function parseHighlightLines(attrStr) {
     const lines = new Set();
@@ -188,16 +222,15 @@
       for (const item of store) {
         let rendered = '';
         if (katexLib) {
-          try {
-            rendered = katexLib.renderToString(item.formula, {
-              displayMode: item.type === 'display',
-              throwOnError: false,
-              output: 'htmlAndMathml',
-              trust: true
-            });
-          } catch (e) {
-            rendered = `<span class="katex-error" title="${escapeHtml(e.message)}">${escapeHtml(item.formula)}</span>`;
-          }
+          const displayMode = item.type === 'display';
+          const opts = { displayMode, throwOnError: false, output: 'htmlAndMathml', trust: true };
+          rendered = renderKatexCached(
+            katexLib,
+            item.formula,
+            `${katexLib.version || 'katex'}\u0001${displayMode}\u0001htmlAndMathml\u0001trust`,
+            opts,
+            (e) => `<span class="katex-error" title="${escapeHtml(e.message)}">${escapeHtml(item.formula)}</span>`
+          );
         } else {
           rendered = item.type === 'display' 
             ? `<div class="katex-fallback katex-display">$$${escapeHtml(item.formula)}$$</div>`
