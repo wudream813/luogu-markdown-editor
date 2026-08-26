@@ -369,27 +369,47 @@
 
         // 10. Normal Paragraphs
         const pLines = [];
+        // A line is treated as the start of a block element only when it will actually be
+        // consumed by one of the block branches above (container with a type name, plain
+        // `:::` without a type is NOT a block and must be kept as text). Otherwise a lone or
+        // malformed prefix such as ":::" or "::::success[标题" would make this collection empty
+        // and leave `i` unmoved, causing an infinite loop.
+        const isBlockStart = (cur) => {
+          if (/^\s*$/.test(cur)) return true;
+          if (/^#{1,6}\s+/.test(cur)) return true;
+          if (/^[`~]{3,}/.test(cur)) return true;
+          if (/^::cute-table/i.test(cur)) return true;
+          if (cur.trim().startsWith('|')) return true;
+          if (/^\s*>/.test(cur)) return true;
+          if (/^\s*([*+-]|\d+\.)\s+/.test(cur)) return true;
+          if (/^(\*\s*){3,}$|^(-\s*){3,}$|^(_\s*){3,}$/.test(cur.trim())) return true;
+          // Container block: must fully match the colon syntax used above (type name present
+          // and the whole line matches, including any optional [title]/{param}).
+          if (/^:{3,}[a-zA-Z0-9_\-]/.test(cur)) {
+            if (/^:{3,}[a-zA-Z0-9_\-].*$/.test(cur) &&
+                /^(:{3,})([a-zA-Z0-9_\-]+)(?:\[(.*?)\])?(?:\{(.*?)\})?\s*$/.test(cur)) return true;
+            // A colon prefix that does NOT fully match (e.g. "::::success[标题" where the
+            // optional title bracket is unclosed) is NOT a valid container — keep as text.
+            return false;
+          }
+          return false;
+        };
         while (i < n) {
           const cur = lines[i];
           if (/^\s*$/.test(cur)) break;
-          // Stop if next line is start of block element
-          if (
-            /^#{1,6}\s+/.test(cur) ||
-            /^[`~]{3,}/.test(cur) ||
-            /^:{3,}[a-zA-Z0-9_\-]/.test(cur) ||
-            /^::cute-table/i.test(cur) ||
-            /^(\*\s*){3,}$|^(-\s*){3,}$|^(_\s*){3,}$/.test(cur.trim()) ||
-            /^\s*>/.test(cur) ||
-            cur.trim().startsWith('|') ||
-            /^\s*([*+-]|\d+\.)\s+/.test(cur)
-          ) {
-            break;
-          }
+          if (isBlockStart(cur)) break;
           pLines.push(cur);
           i++;
         }
 
         if (pLines.length > 0) {
+          out.push(this.renderParagraph(pLines));
+        } else if (i < n) {
+          // Invariant: never leave `i` pointing at an unconsumed, non-advancing line.
+          // If nothing was collected (the current line was blocked but is really text), emit
+          // it as a paragraph so the loop always advances and cannot spin forever.
+          pLines.push(lines[i]);
+          i++;
           out.push(this.renderParagraph(pLines));
         }
       }
