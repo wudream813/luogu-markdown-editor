@@ -473,8 +473,12 @@ html, body {
   color: var(--text-primary);
   background: var(--bg-editor);
   tab-size: 4;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  /* No soft-wrap: a long source line stays on ONE row and scrolls horizontally,
+     so each logical line keeps a single gutter line number. (The previous
+     pre-wrap made a long single line wrap into multiple rows.) */
+  white-space: pre;
+  word-wrap: normal;
+  overflow-x: auto;
   overflow-y: auto;
 }
 
