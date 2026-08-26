@@ -400,7 +400,15 @@ const safeStorage = {
     // Update Line Numbers Gutter - High performance single-pass
     updateLineNumbers() {
       if (!this.gutterEl || !this.textarea) return;
-      const lines = this.textarea.value.split('\n');
+      // Treat a single trailing newline as a line terminator, not a phantom blank
+      // line. e.g. pasting "sentence\n" should show ONE line number ("1"), not
+      // "1\n2", because the content is genuinely a single line. (Copying a whole
+      // line from anywhere usually carries that trailing newline.)
+      let text = this.textarea.value;
+      if (text.endsWith('\n')) {
+        text = text.slice(0, -1);
+      }
+      const lines = text.split('\n');
       const count = Math.max(lines.length, 1);
       
       let str = '';
