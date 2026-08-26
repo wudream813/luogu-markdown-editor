@@ -950,7 +950,7 @@ const safeStorage = {
     }
 
     // Export Standalone HTML (Ultra Polish & High Aesthetics)
-    exportStandaloneHTML() {
+    async exportStandaloneHTML() {
       const markdown = this.textarea.value;
       let renderedHtml = this.parser.render(markdown);
       
@@ -1415,11 +1415,34 @@ const safeStorage = {
 </body>
 </html>`;
 
+      const fileName = `${title}.html`;
       const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+
+      // Prefer the File System Access API so the user can choose the save location
+      // and rename the file (native "Save As" dialog). Fall back to a normal
+      // download where the API isn't available (Firefox / Safari).
+      if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function') {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: fileName,
+            types: [{ description: 'HTML 文档', accept: { 'text/html': ['.html'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(fullHtml);
+          await writable.close();
+          this.showToast('已导出高颜值独立 HTML 文档！', 'success');
+          return;
+        } catch (err) {
+          // AbortError = user cancelled the dialog: stop silently.
+          if (err && err.name === 'AbortError') return;
+          // Any other error (e.g. permission) → fall through to the normal download.
+        }
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${title}.html`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
