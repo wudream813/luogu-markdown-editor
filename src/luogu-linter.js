@@ -516,10 +516,16 @@
         // 14. Append sentence-end fullwidth period for plain text Chinese sentences or formulas or English words missing end punctuation (strictly excluding headings, lists, tables, quotes)
         const trimmedLine = line.trim();
         if (trimmedLine && !/^[#\*\+\-\|:>`\d\.\s]/.test(trimmedLine)) {
-          if (/[\u4e00-\u9fa5a-zA-Z0-9]$/.test(trimmedLine) || /LUOGUTOKENINLINEMATH\d+END$/.test(trimmedLine)) {
-            const endPunct = '[。！？：；……“”‘’（）【】《》、]';
-            if (!new RegExp(`${endPunct}$`).test(trimmedLine)) {
-              line = line + '。';
+          // A standalone block-level element — a display equation ($$...$$), an image/video,
+          // or a link on its own line — is not a prose sentence, so never append a sentence
+          // period here. These are tokenized into LUOGUTOKEN...END during formatting.
+          const endsWithBlockToken = /LUOGUTOKEN(?:MEDIA|LINK|URL|DISPLAYMATH)\d+END$/.test(trimmedLine);
+          if (!endsWithBlockToken) {
+            if (/[\u4e00-\u9fa5a-zA-Z0-9]$/.test(trimmedLine) || /LUOGUTOKENINLINEMATH\d+END$/.test(trimmedLine)) {
+              const endPunct = '[。！？：；……“”‘’（）【】《》、]';
+              if (!new RegExp(`${endPunct}$`).test(trimmedLine)) {
+                line = line + '。';
+              }
             }
           }
         }
