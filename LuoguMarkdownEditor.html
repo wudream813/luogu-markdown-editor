@@ -882,6 +882,14 @@ code[class*="language-"] {
   padding-left: 13px;
 }
 
+/* When a line is highlighted, the sticky gutter cell must composite the same
+   translucent highlight over the code background — otherwise the gutter shows a
+   plain dark block that sits "one layer above" the highlight. (The linear-gradient
+   layer + opaque base keeps it opaque so it still masks horizontally-scrolled code.) */
+.code-line-highlighted .code-line-number {
+  background: linear-gradient(rgba(229, 192, 123, 0.15), rgba(229, 192, 123, 0.15)), #282c34;
+}
+
 /* Tables & Merged Cells */
 .luogu-table-wrapper {
   width: 100%;
@@ -7535,6 +7543,17 @@ const safeStorage = {
       const readTime = Math.max(1, Math.ceil(words / 300));
       const nowStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
 
+      // Inline the SAME KaTeX (0.18.4) CSS + fonts the editor uses, so the exported
+      // document renders math identically to the preview and also works offline.
+      // (The old CDN CSS was 0.16.11 and used different class names, e.g. .sizing
+      // vs the 0.18.4 .katex-sizing — which broke \Huge sizing and the \ne glyph.)
+      const katexCss = (typeof document !== 'undefined')
+        ? Array.from(document.querySelectorAll('style'))
+            .map(s => s.textContent)
+            .filter(css => /@font-face\{[^}]*font-family:KaTeX_/i.test(css))
+            .join('\n')
+        : '';
+
       const fullHtml = `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
 <head>
@@ -7542,7 +7561,7 @@ const safeStorage = {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(title)}</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%233498db'/%3E%3Cstop offset='100%25' stop-color='%231d6fa5'/%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M7 11h3l3 7 3-7h3v10h-2.5v-6.5l-2.7 6.5h-1.6L9.5 14.5V21H7V11zm15 0h2v10h-2v-3.5h-2.5v-2H22V11z' fill='%23ffffff'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <style>${katexCss}</style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css">
   <style>
     :root {
@@ -7763,6 +7782,9 @@ const safeStorage = {
       border-left: 3px solid #eab308;
       padding-left: 13px;
     }
+    .code-line-highlighted .code-line-number {
+      background: linear-gradient(rgba(234, 179, 8, 0.15), rgba(234, 179, 8, 0.15)), var(--code-bg);
+    }
     /* Tables */
     .luogu-table-wrapper { width: 100%; overflow-x: auto; margin: 1.4em 0; }
     .luogu-table { width: 100%; border-collapse: collapse; font-size: 13px; border: 1px solid var(--border); }
@@ -7805,19 +7827,9 @@ const safeStorage = {
     .luogu-epigraph-author { text-align: right; font-size: 12px; color: var(--text-muted); }
     .luogu-align-center { text-align: center; margin: 1.2em 0; }
     .luogu-align-right { text-align: right; margin: 1.2em 0; }
-    /* KaTeX Font Sizing & Display Rules for offline export */
-    .katex .sizing.size1, .katex .fontsize-ensurer.size1 { font-size: 0.5em !important; }
-    .katex .sizing.size2, .katex .fontsize-ensurer.size2 { font-size: 0.6em !important; }
-    .katex .sizing.size3, .katex .fontsize-ensurer.size3 { font-size: 0.7em !important; }
-    .katex .sizing.size4, .katex .fontsize-ensurer.size4 { font-size: 0.8em !important; }
-    .katex .sizing.size5, .katex .fontsize-ensurer.size5 { font-size: 0.9em !important; }
-    .katex .sizing.size6, .katex .fontsize-ensurer.size6 { font-size: 1.0em !important; }
-    .katex .sizing.size7, .katex .fontsize-ensurer.size7 { font-size: 1.2em !important; }
-    .katex .sizing.size8, .katex .fontsize-ensurer.size8 { font-size: 1.44em !important; }
-    .katex .sizing.size9, .katex .fontsize-ensurer.size9 { font-size: 1.728em !important; }
-    .katex .sizing.size10, .katex .fontsize-ensurer.size10 { font-size: 2.074em !important; }
-    .katex .sizing.size11, .katex .fontsize-ensurer.size11 { font-size: 2.488em !important; }
-    .katex { font: normal 1.15em KaTeX_Main, Times New Roman, serif; line-height: 1.2; }
+    /* KaTeX sizing uses the inlined 0.18.4 stylesheet (class .katex-sizing.reset-size6.sizeN);
+       only keep the display/base font tweaks for the exported theme. */
+    .katex { font: normal 1.15em KaTeX_Main, "Times New Roman", serif; line-height: 1.2; }
     .katex-display { display: block; margin: 1em 0; text-align: center; }
     .luogu-math-display { text-align: center; margin: 1.2em 0; overflow-x: auto; }
     /* Lists & Tasks */

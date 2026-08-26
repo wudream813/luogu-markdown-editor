@@ -863,6 +863,14 @@ code[class*="language-"] {
   padding-left: 13px;
 }
 
+/* When a line is highlighted, the sticky gutter cell must composite the same
+   translucent highlight over the code background — otherwise the gutter shows a
+   plain dark block that sits "one layer above" the highlight. (The linear-gradient
+   layer + opaque base keeps it opaque so it still masks horizontally-scrolled code.) */
+.code-line-highlighted .code-line-number {
+  background: linear-gradient(rgba(229, 192, 123, 0.15), rgba(229, 192, 123, 0.15)), #282c34;
+}
+
 /* Tables & Merged Cells */
 .luogu-table-wrapper {
   width: 100%;
