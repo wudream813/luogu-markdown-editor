@@ -830,19 +830,21 @@ code[class*="language-"],
 }
 
 .code-line {
-  /* Use plain block flow, not flexbox. The Windows desktop app uses an embedded
-     WebView that lacks flexbox support; with display:flex the <div>s fall back to
-     inline and every code line collapses onto a single row (e.g. "1#include...2...").
-     Block layout stacks rows reliably in both legacy WebView and modern browsers. */
-  display: block !important;
-  min-height: 20.8px;
+  /* Use a table row layout, not flexbox. The Windows desktop app uses an embedded
+     WebView that lacks flexbox support — with display:flex the divs fall back to
+     inline and lines collapse onto one row ("1#include...2..."). A table layout
+     also keeps the gutter line number exactly top-aligned with its code line
+     (no baseline offset), and it stacks rows reliably in legacy WebView too. */
+  display: table !important;
+  table-layout: auto;
+  border-collapse: collapse;
   padding: 0 16px;
   width: 100%;
   box-sizing: border-box;
 }
 
 .code-line-number {
-  display: inline-block;
+  display: table-cell !important;
   width: 36px;
   min-width: 36px;
   padding-right: 14px;
@@ -855,10 +857,16 @@ code[class*="language-"],
 }
 
 .code-line-text {
-  /* Inline text sitting beside the gutter; long lines wrap (pre-wrap) per the
-     group rule above. */
-  display: inline;
+  /* Code text beside the gutter. Keep each code line on a single row (no wrapping,
+     white-space: pre) so the line number stays aligned to its own line; long lines
+     are handled by horizontal scroll on .luogu-code-pre. Prevents the "line number
+     fans out across many wrapped child rows" misalignment on narrow panes. */
+  display: table-cell !important;
   vertical-align: top;
+  white-space: pre !important;
+  word-break: normal !important;
+  word-wrap: normal !important;
+  overflow-wrap: normal !important;
 }
 
 .code-line-highlighted {
