@@ -679,9 +679,12 @@ html, body {
 }
 
 .luogu-task-item {
+  display: block;
+  margin-bottom: 6px;
+}
+.luogu-task-item > .luogu-checkbox-label {
   display: flex;
   align-items: center;
-  margin-bottom: 6px;
 }
 
 .luogu-checkbox-label {
@@ -808,7 +811,11 @@ code[class*="language-"],
 }
 
 .code-line {
-  display: flex !important;
+  /* Use plain block flow, not flexbox. The Windows desktop app uses an embedded
+     WebView that lacks flexbox support; with display:flex the <div>s fall back to
+     inline and every code line collapses onto a single row (e.g. "1#include...2...").
+     Block layout stacks rows reliably in both legacy WebView and modern browsers. */
+  display: block !important;
   min-height: 20.8px;
   padding: 0 16px;
   width: 100%;
@@ -819,19 +826,20 @@ code[class*="language-"],
   display: inline-block;
   width: 36px;
   min-width: 36px;
-  flex: 0 0 36px;
   padding-right: 14px;
   margin-right: 10px;
   text-align: right;
   color: #5c6370;
   border-right: 1px solid #3e4451;
   user-select: none;
+  vertical-align: top;
 }
 
 .code-line-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  width: 100%;
+  /* Inline text sitting beside the gutter; long lines wrap (pre-wrap) per the
+     group rule above. */
+  display: inline;
+  vertical-align: top;
 }
 
 .code-line-highlighted {

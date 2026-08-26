@@ -110,6 +110,8 @@
 
       // Reset global task counter for this render pass
       this.taskCounter = 0;
+      // Reset heading slug registry so anchor ids stay unique across the document
+      this.headingSlugs = new Set();
 
       // Stage 1: Math placeholder extraction
       const mathPlaceholders = [];
@@ -154,11 +156,20 @@
       });
 
       // Inline math: $ ... $
-      // Must not match \$ (escaped) or empty $$, and should not span across empty lines
+      // Must not match \$ (escaped) or empty $$, and should not span across empty lines.
+      // Reject candidates whose content reads like prose, so that paired "$" used for
+      // currency / placeholders in normal text (e.g. "花费$5和$10") are not eaten as math.
       text = text.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, (match, prefix, formula) => {
-        if (!formula.trim()) return match;
+        const f = formula.trim();
+        if (!f) return match;
+        // If the "formula" contains bare CJK (not inside \text{}/\mathrm{} etc.), treat it
+        // as literal text rather than math.
+        if (/[\u4e00-\u9fa5]/.test(f)) {
+          const strippedText = f.replace(/\\(?:text|mathrm|mathbf|operatorname|mathcal|textstyle|displaystyle)\{[^{}]*\}/g, '');
+          if (/[\u4e00-\u9fa5]/.test(strippedText)) return match;
+        }
         const id = `LUOGUMATHINLINE${mathIdx++}END`;
-        store.push({ id, type: 'inline', formula: formula.trim() });
+        store.push({ id, type: 'inline', formula: f });
         return prefix + id;
       });
 
@@ -300,7 +311,15 @@
           const level = headingMatch[1].length;
           const headingText = headingMatch[2].trim();
           const renderedText = this.renderInline(headingText);
-          const slug = headingText.toLowerCase().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-|-$/g, '') || `h-${i}`;
+          let slug = headingText.toLowerCase().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-|-$/g, '') || `h-${i}`;
+          // Guarantee unique anchor ids even if headings collide (e.g. repeated titles,
+          // or titles differing only by case / punctuation)
+          if (this.headingSlugs && this.headingSlugs.has(slug)) {
+            let n = 2;
+            while (this.headingSlugs.has(`${slug}-${n}`)) n++;
+            slug = `${slug}-${n}`;
+          }
+          if (this.headingSlugs) this.headingSlugs.add(slug);
           out.push(`<h${level} id="${this.options.headingPrefix}${slug}" class="luogu-heading luogu-h${level}">${renderedText}</h${level}>`);
           i++;
           continue;
@@ -661,83 +680,122 @@
       return html;
     }
 
-    // Parse Lists (including tasks)
+    // Parse Lists (including tasks) — indentation-aware, supports nesting.
     parseList(lines, startIndex) {
-      const items = [];
       let i = startIndex;
       const n = lines.length;
+      while (i < n && /^\s*$/.test(lines[i])) i++;
+      const baseIndent = this.indentOf(lines[i]);
+      return this.parseListAt(lines, i, baseIndent);
+    }
 
-      const firstLine = lines[i];
-      const isOrdered = /^\s*\d+\.\s+/.test(firstLine);
+    // Indentation of a line's leading whitespace (spaces + tabs).
+    indentOf(line) {
+      const m = /^[ \t]*/.exec(line);
+      return m ? m[0].length : 0;
+    }
+
+    // Is this line a list item marker (bullet or ordered) followed by content?
+    isListItem(line) {
+      return /^\s*([*+-]|\d+\.)\s+/.test(line);
+    }
+
+    // Recursively parse all items at the given indentation level.
+    // Returns { html, nextIndex }.
+    parseListAt(lines, startIndex, baseIndent) {
+      const n = lines.length;
+      let i = startIndex;
+      const isOrdered = /^\s*\d+\.\s+/.test(lines[i]);
       const listTag = isOrdered ? 'ol' : 'ul';
+      const items = [];
+      let isTaskList = false;
 
       while (i < n) {
         const line = lines[i];
+
+        // Break or jump over blank lines
         if (/^\s*$/.test(line)) {
-          let nextNonEmpty = i + 1;
-          while (nextNonEmpty < n && /^\s*$/.test(lines[nextNonEmpty])) nextNonEmpty++;
-          if (nextNonEmpty < n && /^\s*([*+-]|\d+\.)\s+/.test(lines[nextNonEmpty])) {
-            i = nextNonEmpty;
-            continue;
-          } else {
+          let j = i;
+          while (j < n && /^\s*$/.test(lines[j])) j++;
+          if (j < n && this.isListItem(lines[j])) {
+            const nind = this.indentOf(lines[j]);
+            if (nind >= baseIndent) { i = j; continue; }
             break;
           }
-        }
-
-        const match = isOrdered 
-          ? line.match(/^\s*(\d+)\.\s+(.*)$/)
-          : line.match(/^\s*([*+-])\s+(.*)$/);
-
-        if (match) {
-          let itemText = match[2];
-          i++;
-
-          while (i < n) {
-            const next = lines[i];
-            if (/^\s*$/.test(next)) {
-              let peek = i + 1;
-              while (peek < n && /^\s*$/.test(lines[peek])) peek++;
-              if (peek < n && /^\s{2,}/.test(lines[peek])) {
-                i = peek;
-                continue;
-              } else {
-                break;
-              }
-            }
-            if (/^\s*([*+-]|\d+\.)\s+/.test(next)) break;
-            if (/^\s{2,}/.test(next)) {
-              itemText += '\n' + next.replace(/^\s{2,}/, '');
-              i++;
-            } else {
-              break;
-            }
-          }
-
-          items.push(itemText);
-        } else {
           break;
         }
-      }
 
-      let isTaskList = false;
-      const renderedItems = items.map((rawText) => {
+        const match = line.match(/^(\s*)([*+-]|\d+\.)\s+(.*)$/);
+        if (!match || this.indentOf(line) !== baseIndent) break;
+
+        let rawText = match[3];
+        i++;
+        let nestedHtml = '';
+
+        // Detect a task marker now and assign its sequential index in source order.
+        // (editor.js's toggleTask maps data-task-index back to the Nth task line in the
+        // source, so the index must follow the source line order, not render/traversal order.)
         const taskMatch = rawText.match(/^\[([ xX])\]\s*(.*)$/);
+        let taskIdx = null;
         if (taskMatch) {
           isTaskList = true;
-          const isChecked = taskMatch[1].toLowerCase() === 'x';
-          const content = taskMatch[2];
-          const taskIdx = this.taskCounter++;
-          return `
-            <li class="luogu-task-item">
-              <label class="luogu-checkbox-label">
-                <input type="checkbox" class="luogu-task-checkbox" data-task-index="${taskIdx}" ${isChecked ? 'checked' : ''} onchange="toggleTaskCheckbox(this)" />
-                <span class="luogu-checkbox-custom"></span>
-                <span class="luogu-task-text">${this.renderInline(content)}</span>
-              </label>
-            </li>
-          `;
+          taskIdx = this.taskCounter++;
         }
-        return `<li>${this.renderInline(rawText)}</li>`;
+
+        // Gather continuation lines (deeper, not list items) and nested lists for this item
+        while (i < n) {
+          const nl = lines[i];
+          if (/^\s*$/.test(nl)) {
+            let j = i;
+            while (j < n && /^\s*$/.test(lines[j])) j++;
+            if (j < n) {
+              const nind = this.indentOf(lines[j]);
+              const isItem = this.isListItem(lines[j]);
+              if (isItem && nind > baseIndent) { i = j; continue; }
+              if (isItem && nind === baseIndent) break;
+              if (nind > baseIndent) { i = j; continue; }
+              break;
+            } else { i = j; break; }
+          }
+          const nind = this.indentOf(nl);
+          const isItem = this.isListItem(nl);
+          if (isItem && nind === baseIndent) break;              // sibling at same level
+          if (isItem && nind > baseIndent) {                     // nested list
+            const sub = this.parseListAt(lines, i, nind);
+            nestedHtml += sub.html;
+            i = sub.nextIndex;
+            continue;
+          }
+          if (nind > baseIndent) {                               // continuation text line
+            rawText += '\n' + nl.replace(/^[ \t]+/, '');
+            i++;
+            continue;
+          }
+          break;                                                 // non-indented non-item ends item
+        }
+
+        items.push({ rawText, nestedHtml, taskIdx, taskChecked: taskMatch ? taskMatch[1].toLowerCase() === 'x' : false });
+      }
+
+      const renderedItems = items.map((it) => {
+        let inner;
+        let liClass = '';
+        if (it.taskIdx !== null) {
+          liClass = 'luogu-task-item';
+          // Re-match on the final rawText (which may include continuation lines)
+          const finalMatch = it.rawText.match(/^\[([ xX])\]\s*(.*)$/);
+          const content = finalMatch ? finalMatch[2] : it.rawText;
+          inner = `
+            <label class="luogu-checkbox-label">
+              <input type="checkbox" class="luogu-task-checkbox" data-task-index="${it.taskIdx}" ${it.taskChecked ? 'checked' : ''} onchange="toggleTaskCheckbox(this)" />
+              <span class="luogu-checkbox-custom"></span>
+              <span class="luogu-task-text">${this.renderInline(content)}</span>
+            </label>
+          `;
+        } else {
+          inner = this.renderInline(it.rawText);
+        }
+        return `<li${liClass ? ` class="${liClass}"` : ''}>${inner}${it.nestedHtml}</li>`;
       });
 
       const listClass = isTaskList ? 'luogu-list luogu-task-list' : 'luogu-list';
@@ -748,6 +806,20 @@
 
     // Render Paragraph with Luogu line breaks (2 trailing spaces or trailing \)
     renderParagraph(lines) {
+      // If the whole "paragraph" is a single block-level element (a display-math block or
+      // a Bilibili video), emit it as a standalone block instead of wrapping it in <p>,
+      // which would produce illegal HTML (a block <div> inside <p>) and extra empty <p>s.
+      if (lines.length === 1) {
+        const single = lines[0].replace(/(\s{2,}|\\)$/, '').trim();
+        // Display math placeholder token ($$...$$) extracted earlier.
+        if (/^LUOGUMATHBLOCK\d+END$/.test(single)) {
+          return single;
+        }
+        // A Bilibili video embed on its own line renders to a block container.
+        if (/^!\[[^\]]*\]\(bilibili:[\s\S]*\)$/i.test(single)) {
+          return this.renderInline(single);
+        }
+      }
       let html = '';
       let isPrevBreak = false;
       for (let i = 0; i < lines.length; i++) {
