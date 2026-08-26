@@ -1140,7 +1140,10 @@ const safeStorage = {
       line-height: 1.6;
       overflow-x: auto;
     }
-    .code-line { display: flex; padding: 0 16px; min-height: 21px; }
+    /* Use plain block flow, not flexbox, so lines stack reliably in older embedded
+       WebView engines as well as modern browsers. (With display:flex the divs fall
+       back to inline and every line collapses onto one row.) */
+    .code-line { display: block; padding: 0 16px; min-height: 21px; }
     .code-line-number {
       display: inline-block;
       width: 36px;
@@ -1150,11 +1153,14 @@ const safeStorage = {
       color: #64748b;
       border-right: 1px solid rgba(255, 255, 255, 0.1);
       user-select: none;
+      vertical-align: top;
     }
     .code-line-text {
-      flex: 1 1 auto;
-      min-width: 0;
-      white-space: pre;
+      display: inline;
+      white-space: pre-wrap;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+      word-break: break-all;
     }
     .code-line-highlighted {
       background: rgba(234, 179, 8, 0.15);
@@ -1255,7 +1261,8 @@ const safeStorage = {
         white-space: pre-wrap !important;
         word-break: break-all !important;
       }
-      .code-line-text { flex: 1 1 auto !important; min-width: 0 !important; }
+      .code-line { display: block !important; }
+      .code-line-text { display: inline !important; white-space: pre-wrap !important; }
       h1, h2, h3, h4, h5, h6, pre, .luogu-callout, table, tr { page-break-inside: avoid !important; break-inside: avoid !important; }
     }
   </style>
