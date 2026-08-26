@@ -5568,11 +5568,15 @@ Prism.languages.js = Prism.languages.javascript;
         // 4. Non-math algorithms / acronyms in LaTeX check ($DFS$, $DP$)
         const nonMathMatch = line.match(NON_MATH_LATEX_REGEX);
         if (nonMathMatch) {
+          // NON_MATH_LATEX_REGEX has the global flag, so .match() returns full-match strings
+          // (["$DFS$", ...]) rather than capture groups. Strip the surrounding "$" to get the
+          // actual name (e.g. "DFS") for the hint text; without this the message shows "undefined".
+          const nonMathName = (nonMathMatch[0] || '').replace(/^\$+|\$+$/g, '');
           issues.push({
             line: lineNum,
             type: 'warning',
             title: '非数学公式（算法名/英文单词）误用 LaTeX',
-            message: `《洛谷基本规范第 2 条》规定：非数学公式（一般英文单词、题目名、算法名、人名等）不应使用 LaTeX。应写为 ${nonMathMatch[1]} 而非 $${nonMathMatch[1]}$。点击【洛谷排版修复】可一键自动去除 $ 符号。`,
+            message: `《洛谷基本规范第 2 条》规定：非数学公式（一般英文单词、题目名、算法名、人名等）不应使用 LaTeX。应写为 ${nonMathName} 而非 $${nonMathName}$。点击【洛谷排版修复】可一键自动去除 $ 符号。`,
             rule: 'non-math-latex',
             fixable: true
           });
