@@ -569,6 +569,7 @@
 
       const lines = markdown.split(/\r?\n/);
       let inCodeBlock = false;
+      let inMathBlock = false;
       const formattedLines = [];
 
       for (let i = 0; i < lines.length; i++) {
@@ -583,6 +584,37 @@
 
         if (inCodeBlock) {
           formattedLines.push(line);
+          continue;
+        }
+
+        // A display-math block delimited by a lone `$$` is LaTeX, not prose: the
+        // linter already exempts it, but the fixer did not track it and happily
+        // appended a sentence period inside the equation ("x = 1。"), corrupting it.
+        if (/^\$\$/.test(line.trim()) && !/\$\$[\s\S]*\$\$/.test(line.trim())) {
+          inMathBlock = !inMathBlock;
+          formattedLines.push(line);
+          continue;
+        }
+        if (inMathBlock) {
+          formattedLines.push(line);
+          continue;
+        }
+
+        // Trailing whitespace is structural in Markdown: two or more spaces at end of
+        // line are a hard line break. Many rules below collapse whitespace (notably the
+        // ones around CJK punctuation) and would eat that break, joining the two lines
+        // in the rendered output. Detach it up front and re-attach it at the very end,
+        // so no individual rule has to remember it exists.
+        //
+        // A run of >= 2 is normalised to exactly 2 (the canonical hard break); a single
+        // trailing space carries no meaning and is dropped.
+        const trailingWs = (line.match(/[ \t]+$/) || [''])[0];
+        const hardBreak = trailingWs.length >= 2 ? '  ' : '';
+        if (trailingWs) line = line.slice(0, line.length - trailingWs.length);
+
+        // A line that was nothing but whitespace is blank; emit it empty.
+        if (!line) {
+          formattedLines.push('');
           continue;
         }
 
@@ -675,8 +707,11 @@
         line = line.replace(/([a-zA-Z0-9\+])\/([a-zA-Z0-9])/g, '$1 / $2');
 
         // 10. Remove spaces between Chinese punctuation and English/numbers/tokens (严格严禁有空格)
-        line = line.replace(new RegExp(`\\s+(${cjkPunct})`, 'g'), '$1');
-        line = line.replace(new RegExp(`(${cjkPunct})\\s+`, 'g'), '$1');
+        // `\s+` would also swallow a trailing two-space hard line break, silently
+        // deleting the author's forced newline. Anchor the trailing form so it only
+        // collapses space that is followed by more text on the same line.
+        line = line.replace(new RegExp(`[^\\S\\n]+(${cjkPunct})`, 'g'), '$1');
+        line = line.replace(new RegExp(`(${cjkPunct})[^\\S\\n]+(?=\\S)`, 'g'), '$1');
 
         // 11. Spacing around styled markdown wrappers (中文*and*标点 -> 中文 *and* 标点)
         line = line.replace(/([\u4e00-\u9fa5])(\*{1,3}|_{1,3}|~~)([a-zA-Z0-9])/g, '$1 $2$3');
@@ -703,8 +738,11 @@
         line = line.replace(/(LUOGUTOKENINLINEMATH\d+END|LUOGUTOKENCODE\d+END)([\u4e00-\u9fa5])/g, '$1 $2');
 
         // Clean space before/after Chinese punctuation once more after token spacing
-        line = line.replace(new RegExp(`\\s+(${cjkPunct})`, 'g'), '$1');
-        line = line.replace(new RegExp(`(${cjkPunct})\\s+`, 'g'), '$1');
+        // `\s+` would also swallow a trailing two-space hard line break, silently
+        // deleting the author's forced newline. Anchor the trailing form so it only
+        // collapses space that is followed by more text on the same line.
+        line = line.replace(new RegExp(`[^\\S\\n]+(${cjkPunct})`, 'g'), '$1');
+        line = line.replace(new RegExp(`(${cjkPunct})[^\\S\\n]+(?=\\S)`, 'g'), '$1');
         line = line.replace(new RegExp(`(${cjkPunct})(\\*{1,3}|_{1,3}|~~)\\s+([\\u4e00-\\u9fa5])`, 'g'), '$1$2$3');
 
         // 14. Append sentence-end fullwidth period for plain text Chinese sentences or formulas or English words missing end punctuation (strictly excluding headings, lists, tables, quotes)
@@ -740,14 +778,9 @@
           }
         }
 
-        // Clean redundant multiple spaces.
-        // Two or more spaces at the END of a line are Markdown's hard line break, so
-        // collapsing them to one silently removed the break and joined the lines in
-        // the rendered output. Preserve the trailing run and squeeze only the interior.
-        {
-          const hardBreak = /[ ]{2,}$/.test(line) ? '  ' : (/[ ]$/.test(line) ? ' ' : '');
-          line = line.replace(/[ ]+$/, '').replace(/ {2,}/g, ' ') + hardBreak;
-        }
+        // Clean redundant multiple spaces. The hard break was detached above, so this
+        // only ever sees interior runs.
+        line = line.replace(/ {2,}/g, ' ');
 
         // Restore protected tokens (using function callback to prevent $$ replacement in JS)
         for (const token of tokens) {
@@ -756,7 +789,7 @@
           }
         }
 
-        formattedLines.push(line);
+        formattedLines.push(line + hardBreak);
       }
 
       return formattedLines.join('\n');

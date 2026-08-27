@@ -421,3 +421,26 @@ test('formatSpacing stays idempotent across these cases', () => {
     assert.equal(linter.formatSpacing(once), once, `not idempotent: ${JSON.stringify(md)}`);
   }
 });
+
+// ------------------------------- formatSpacing: hard breaks & display math
+
+test('hard break survives after CJK punctuation', () => {
+  // The rules that collapse whitespace around Chinese punctuation used \s+, which also
+  // ate a trailing two-space hard break — so "第一行。  \n" lost its forced newline.
+  assert.equal(linter.formatSpacing('第一行。  \n第二行。'), '第一行。  \n第二行。');
+  assert.equal(linter.formatSpacing('这是第一行文本  \n第二行。'), '这是第一行文本  \n第二行。');
+  assert.equal(linter.formatSpacing('A  \nB  \nC。'), 'A  \nB  \nC。');
+  // Content on the line is still fixed, the break is kept.
+  assert.equal(linter.formatSpacing('这是test  \n第二行。'), '这是 test  \n第二行。');
+  // Longer runs normalise to the canonical two spaces; a single one is meaningless.
+  assert.equal(linter.formatSpacing('第一行   \n第二行。'), '第一行  \n第二行。');
+  assert.equal(linter.formatSpacing('结尾。 '), '结尾。');
+  assert.equal(linter.formatSpacing('   '), '');
+});
+
+test('display math blocks are never touched by the fixer', () => {
+  // The fixer did not track $$ blocks and appended a sentence period inside the
+  // equation, corrupting the LaTeX.
+  assert.equal(linter.formatSpacing('$$\nx = 1\n$$'), '$$\nx = 1\n$$');
+  assert.equal(linter.formatSpacing('$$\n\\sum_{i=1}^{n} i\n$$'), '$$\n\\sum_{i=1}^{n} i\n$$');
+});
