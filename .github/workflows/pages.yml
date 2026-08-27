@@ -1,0 +1,58 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Allow the deploy job to mint an id-token for Pages, but nothing else.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two deploys at once; let a newer push supersede an in-flight one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The single-file editor is a build artifact and is not committed, so the
+      # site has to be produced here rather than served straight from the repo.
+      - name: Build the standalone editor
+        run: node build-standalone.js
+
+      - name: Assemble the site
+        run: |
+          mkdir -p site
+          # The standalone file IS the app: fully self-contained, no network needed.
+          cp LuoguMarkdownEditor.html site/index.html
+          # Keep the same file under its real name so the page can offer it as a
+          # download ("save this one file and use it offline forever").
+          cp LuoguMarkdownEditor.html site/LuoguMarkdownEditor.html
+          # Jekyll would otherwise ignore files/dirs beginning with an underscore.
+          touch site/.nojekyll
+          echo "Site is $(du -sh site | cut -f1)"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
