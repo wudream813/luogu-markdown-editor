@@ -12,14 +12,14 @@ module.exports = [
   ['display-math', '$$\\sum_{i=1}^n \\frac{1}{i}$$'],
   ['math-multiline', '$$\n\\begin{aligned}\na &= b \\\\\nc &= d\n\\end{aligned}\n$$'],
   ['math-many', Array.from({ length: 30 }, (_, i) => `第 ${i} 段 $a_{${i}}$ 与 $$b_{${i}}$$`).join('\n\n')],
-  ['math-cjk-reject', '花费$5和$10 元'],
+  ['math-cjk-currency-renders', '花费$5和$10 元'],
   // CJK inside a formula must still render: Luogu accepts it, and rejecting every
   // span containing CJK also killed valid formulas like $设x=1$ and $a_{最大}$.
   ['math-cjk-inline-accept', '行内 $设x=1$ 与 $a_{最大}$ 都是公式'],
   ['math-cjk-display', '$$设 x = 1$$'],
   ['math-cjk-display-multiline', '$$\n\\begin{aligned}\na &= b \\\\\nc &= 中文说明\n\\end{aligned}\n$$'],
   ['math-cjk-text-wrapped', '$$\\text{设有} n \\text{个点}$$'],
-  ['math-cjk-prose-reject', '价格是$100，另一个是$200'],
+  ['math-cjk-prose-renders', '价格是$100，另一个是$200'],
   ['math-in-code', '`$x$` 不该被解析\n\n```\n$y$\n```'],
   ['math-adjacent', '$a$$b$'],
   ['math-empty', '$$ $$'],

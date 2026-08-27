@@ -135,9 +135,17 @@ test('no placeholder tokens leak into output for any corpus case', () => {
   }
 });
 
-test('currency-like dollars are not treated as math', () => {
+test('a matched $ pair always renders, even around CJK', () => {
+  // Previously this was suppressed on the theory that it was currency, which also
+  // broke valid formulas like $设x=1$. Rendering is now unconditional.
   const html = render('花费$5和$10 元');
-  assert.ok(!/katex|luogu-math/.test(html), html);
+  assert.ok(/katex|luogu-math/.test(html), html);
+});
+
+test('CJK inside a formula still renders', () => {
+  for (const md of ['$设x=1$', '$a_{最大}$', '$$设 x = 1$$']) {
+    assert.ok(/katex|luogu-math/.test(render(md)), md);
+  }
 });
 
 test('renders every corpus case without throwing', () => {

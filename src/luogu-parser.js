@@ -229,30 +229,14 @@
       // Inline math: $ ... $
       // Must not match \$ (escaped) or empty $$, and should not span across empty lines.
       //
-      // The tricky part is telling a real formula from two unrelated currency signs in
-      // prose ("花费$5和$10元"). Rejecting anything that contains CJK was too blunt: it
-      // also killed perfectly valid formulas such as "$设x=1$" or "$a_{最大}$", which
-      // Luogu itself renders. Instead, only reject when the span looks like prose that
-      // merely happens to sit between two dollar signs.
+      // Everything between a matched pair renders, CJK included. Earlier versions tried
+      // to guess whether a span was "really" a formula and silently refused to render
+      // CJK ones, which broke valid formulas like $设x=1$. Guessing is the wrong job for
+      // a renderer: the linter now raises a "中文不宜放在公式中" warning instead, so the
+      // author is told about it while still seeing exactly what they wrote.
       text = text.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, (match, prefix, formula) => {
         const f = formula.trim();
         if (!f) return match;
-
-        // Content outside \text{}-style wrappers, i.e. the part that must be real math.
-        const bare = f.replace(
-          /\\(?:text|mathrm|mathbf|operatorname|mathcal|mathsf|mathtt|textbf|textit|textstyle|displaystyle)\s*\{[^{}]*\}/g,
-          ''
-        );
-
-        if (/[\u4e00-\u9fa5]/.test(bare)) {
-          // Any LaTeX control sequence, sub/superscript, or math operator means the
-          // author clearly intended a formula, CJK or not.
-          const hasMathSignal = /\\[a-zA-Z]+|[_^{}]|[+\-*/=<>]|\\\\/.test(bare);
-          if (!hasMathSignal) return match;
-
-          // CJK punctuation is a strong sign this is a sentence, not a formula.
-          if (/[，。；：、！？“”‘’（）《》【】]/.test(bare)) return match;
-        }
 
         const id = `LUOGUMATHINLINE${mathIdx++}END`;
         store.push({ id, type: 'inline', formula: f });

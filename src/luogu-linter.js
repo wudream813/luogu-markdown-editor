@@ -25,6 +25,11 @@
   // Common algorithm names and English acronyms that should NOT be in LaTeX
   const NON_MATH_LATEX_REGEX = /\$(DFS|BFS|Dijkstra|DP|SPFA|Kruskal|Prim|Trie|AC|WA|TLE|MLE|RE|CE|UKE|PC|C\+\+|Python|Java|Pascal|Tarjan|Floyd|Ford|Bellman|LCT|ST|SAM|ACAM)\$/gi;
 
+  // Bare CJK inside $...$ / $$...$$. Text wrapped in \text{}-style commands is the
+  // sanctioned way to put Chinese in a formula, so it is stripped before testing.
+  const MATH_TEXT_WRAPPERS =
+    /\\(?:text|mathrm|mathbf|operatorname|mathcal|mathsf|mathtt|textbf|textit|textstyle|displaystyle)\s*\{[^{}]*\}/g;
+
   // Standard TeX functions
   const STANDARD_MATH_FUNCS = ['gcd', 'max', 'min', 'log', 'ln', 'det', 'sin', 'cos', 'tan', 'exp', 'sup', 'inf', 'lim'];
   // Custom functions requiring \operatorname
@@ -174,6 +179,33 @@
             message: `《洛谷基本规范第 2 条》规定：非数学公式（一般英文单词、题目名、算法名、人名等）不应使用 LaTeX。应写为 ${nonMathName} 而非 $${nonMathName}$。点击【洛谷排版修复】可一键自动去除 $ 符号。`,
             rule: 'non-math-latex',
             fixable: true
+          });
+        }
+
+        // 4b. Bare Chinese inside a formula. This renders fine, but the Luogu style
+        // guide asks authors to keep prose out of LaTeX, so warn rather than refuse.
+        const cjkFormulas = [];
+        const collectCjk = (re) => {
+          let m;
+          re.lastIndex = 0;
+          while ((m = re.exec(line)) !== null) {
+            const body = (m[1] || '').replace(MATH_TEXT_WRAPPERS, '');
+            if (/[\u4e00-\u9fa5]/.test(body)) cjkFormulas.push(m[0].trim().replace(/^[^$]+/, ''));
+          }
+        };
+        collectCjk(/\$\$([^\$]+?)\$\$/g);
+        collectCjk(/(?:^|[^\\$])\$([^\$\n]+?)\$/g);
+        if (cjkFormulas.length > 0) {
+          const sample = cjkFormulas[0].length > 24
+            ? `${cjkFormulas[0].slice(0, 24)}…`
+            : cjkFormulas[0];
+          issues.push({
+            line: lineNum,
+            type: 'warning',
+            title: '公式中包含中文',
+            message: `《洛谷题解规范》建议：中文一般不要放在 LaTeX 公式中（如 ${sample}）。公式仍会正常渲染，但更推荐把中文移到公式外，或用 \\text{中文} 包裹。`,
+            rule: 'cjk-in-math',
+            fixable: false
           });
         }
 
