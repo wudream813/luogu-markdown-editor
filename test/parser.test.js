@@ -230,23 +230,34 @@ test('render cost stays near-linear in document size', () => {
     }
     return d.join('\n');
   };
-  const time = (md) => {
-    const t = Date.now();
-    render(md);
-    return Date.now() - t;
+  // Timing on a shared CI runner is noisy in one direction only: a neighbour can
+  // steal time and inflate a sample, but nothing can make a run faster than the
+  // work actually takes. So take the MINIMUM of several rounds, which approximates
+  // the interference-free cost and keeps the ratio stable.
+  const bestOf = (md, rounds = 5) => {
+    let best = Infinity;
+    for (let i = 0; i < rounds; i++) {
+      const t = process.hrtime.bigint();
+      render(md);
+      const ms = Number(process.hrtime.bigint() - t) / 1e6;
+      if (ms < best) best = ms;
+    }
+    return best;
   };
 
   const small = build(500);
   const large = build(2000); // 4x the content
 
   // Warm up so KaTeX/JIT effects do not distort the ratio.
-  time(small);
+  bestOf(small, 2);
+  bestOf(large, 1);
 
-  const tSmall = Math.max(time(small), 1);
-  const tLarge = time(large);
+  const tSmall = Math.max(bestOf(small), 0.5);
+  const tLarge = bestOf(large);
 
-  // Quadratic behaviour would give ~16x for a 4x size increase. Allow generous
-  // headroom for noise on shared CI runners but still fail on a return to O(n^2).
+  // Quadratic behaviour gives ~16x for a 4x size increase; the linear-ish
+  // implementation sits near 3x. 8x leaves room for noise while still failing
+  // loudly on a return to O(n^2).
   const ratio = tLarge / tSmall;
-  assert.ok(ratio < 10, `render appears super-linear: 4x size cost ${ratio.toFixed(1)}x`);
+  assert.ok(ratio < 8, `render appears super-linear: 4x size cost ${ratio.toFixed(1)}x`);
 });
