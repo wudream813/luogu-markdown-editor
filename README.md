@@ -118,9 +118,9 @@ node build-standalone.js   # 构建单文件离线版
 python3 app.py             # 启动本地服务（仅绑定 127.0.0.1）
 
 # 浏览器端套件（需 npx playwright install chromium），针对构建产物运行
-node test/browser/xss.test.js         # XSS 向量回归
-node test/browser/fidelity.test.js    # 渲染保真度
-node test/browser/robustness.test.js  # 畸形输入 / ReDoS
+node test-browser/xss.test.js         # XSS 向量回归
+node test-browser/fidelity.test.js    # 渲染保真度
+node test-browser/robustness.test.js  # 畸形输入 / ReDoS
 ```
 
 参与开发请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
@@ -163,7 +163,7 @@ index.html + src/** + assets/**  ──build──▶  LuoguMarkdownEditor.html
   `javascript:` 链接。）
 - Bilibili 播放器采用点击后加载，未点击时不会向 bilibili.com 发起任何请求。
 
-上述性质由 `test/browser/xss.test.js` 中的 32 个攻击向量在真实浏览器里持续验证，
+上述性质由 `test-browser/xss.test.js` 中的 32 个攻击向量在真实浏览器里持续验证，
 并纳入 CI。发现安全问题请按 [SECURITY.md](SECURITY.md) 私密报告。
 
 ### 第三方组件

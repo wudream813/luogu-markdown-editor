@@ -18,6 +18,15 @@ jobs:
       - name: Run parser test suite
         run: node --test test/
 
+      # `node --test test/` recurses, so a browser suite dropped under test/ would be
+      # picked up by this Playwright-less job and fail. Keep those in test-browser/.
+      - name: test/ must not require a browser
+        run: |
+          if grep -rln "require('playwright')" test/; then
+            echo "::error::Playwright suites belong in test-browser/, not test/."
+            exit 1
+          fi
+
       - name: Build the standalone single-file editor
         run: |
           node build-standalone.js
@@ -88,13 +97,13 @@ jobs:
       # place the security properties actually hold or fail: escaping bugs only
       # show up once the HTML is parsed by a browser.
       - name: XSS regression suite
-        run: node test/browser/xss.test.js
+        run: node test-browser/xss.test.js
 
       - name: Rendering fidelity suite
-        run: node test/browser/fidelity.test.js
+        run: node test-browser/fidelity.test.js
 
       - name: Robustness / ReDoS suite
-        run: node test/browser/robustness.test.js
+        run: node test-browser/robustness.test.js
 
   python:
     runs-on: ubuntu-latest

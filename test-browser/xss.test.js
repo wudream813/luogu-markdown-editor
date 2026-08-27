@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const path=require('path');
-const FILE = process.argv[2] || 'file://'+path.resolve(__dirname,'../../LuoguMarkdownEditor.html');
+const FILE = process.argv[2] || 'file://'+path.resolve(__dirname,'../LuoguMarkdownEditor.html');
 
 const VECTORS = [
   ['script 标签',            '<script>window.__x=1</script>'],

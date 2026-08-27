@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const path=require('path');
-const FILE = process.argv[2] || 'file://'+path.resolve(__dirname,'../../LuoguMarkdownEditor.html');
+const FILE = process.argv[2] || 'file://'+path.resolve(__dirname,'../LuoguMarkdownEditor.html');
 // Robustness: malformed / adversarial input must not throw or hang.
 const C=[
   ['空文档',''],

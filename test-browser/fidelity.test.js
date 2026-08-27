@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 const path=require('path');
-const FILE = process.argv[2] || 'file://'+path.resolve(__dirname,'../../LuoguMarkdownEditor.html');
+const FILE = process.argv[2] || 'file://'+path.resolve(__dirname,'../LuoguMarkdownEditor.html');
 // Functional-fidelity probes: does the preview match what Markdown/Luogu actually mean?
 const CASES = [
   ['ATX 标题',            '# H1\n## H2\n###### H6',                       s=>/<h1[^>]*>H1/.test(s)&&/<h6[^>]*>H6/.test(s)],
