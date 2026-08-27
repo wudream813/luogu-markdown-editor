@@ -207,7 +207,19 @@ const safeStorage = {
         });
         ro.observe(this.textarea);
         this._resizeObserver = ro;
+
+        // Watch the preview too. Its anchors move whenever its content reflows —
+        // KaTeX finishing layout, an image or the Bilibili iframe arriving, a font
+        // swap — none of which bump _renderSeq. Without this the sync can aim at
+        // coordinates that are already obsolete.
+        const pro = new ResizeObserver(() => { this._anchorsKey = null; });
+        pro.observe(this.previewEl);
+        this._previewResizeObserver = pro;
       }
+
+      // <details> toggling changes layout without resizing the scroll container in
+      // every case, so invalidate explicitly on toggle as well.
+      this.previewEl.addEventListener('toggle', () => { this._anchorsKey = null; }, true);
       window.addEventListener('resize', () => {
         this._lineTopsKey = null;
         this._anchorsKey = null;
@@ -302,7 +314,15 @@ const safeStorage = {
     // is guaranteed to drift.
     buildScrollAnchors() {
       if (!this.previewEl) return [];
-      const key = this._renderSeq || 0;
+      // The cache key must capture everything the anchor GEOMETRY depends on, not just
+      // the render generation. Anchor tops are layout values, and layout changes with
+      // no re-render at all: expanding a <details>, KaTeX/images/iframes finishing an
+      // async load, a font swap, or the splitter being dragged. Keying on _renderSeq
+      // alone meant sync kept using coordinates from before such a shift, so it aimed
+      // at a position that no longer existed — the preview flew off and then settled
+      // somewhere wrong. Fold the preview's own scroll height and width into the key so
+      // any reflow invalidates it.
+      const key = `${this._renderSeq || 0}\u0000${this.previewEl.scrollHeight}\u0000${this.previewEl.clientWidth}`;
       if (this._anchorsKey === key && this._anchors) return this._anchors;
 
       const nodes = this.previewEl.querySelectorAll('[data-src-line]');
