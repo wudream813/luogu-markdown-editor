@@ -1,0 +1,80 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Allow deploying by hand from the Actions tab.
+  workflow_dispatch:
+
+# Allow the workflow to publish to Pages, but nothing else.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. Don't cancel a running one: a half-finished deploy
+# would leave the live site broken.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # index.html is a thin shell that references src/ and assets/ directly, so the
+      # site works as-is. We also build the single-file edition and publish it next to
+      # the site, so the README's "download the offline version" link can point at a
+      # stable URL instead of only at the latest Release asset.
+      - name: Build the standalone single-file editor
+        run: node build-standalone.js
+
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -r index.html src assets _site/
+          cp LuoguMarkdownEditor.html _site/
+          # Jekyll would otherwise ignore paths it considers special and can choke on
+          # the vendored assets.
+          touch _site/.nojekyll
+          echo "Site contents:"
+          du -sh _site
+          ls _site
+
+      - name: Verify the deployed shell resolves its assets
+        run: |
+          # A missing vendored file turns the live site into an unstyled, non-rendering
+          # page, and that is invisible until someone opens it. Check every local
+          # reference in index.html actually exists in the published tree.
+          missing=0
+          for ref in $(grep -oE '(src|href)="(src|assets)/[^"]*"' _site/index.html \
+                       | sed -E 's/.*"(.*)"/\1/'); do
+            if [ ! -f "_site/$ref" ]; then
+              echo "::error::index.html references $ref, which is not in the published site."
+              missing=1
+            fi
+          done
+          [ "$missing" = "0" ] && echo "All local references resolve."
+          exit $missing
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

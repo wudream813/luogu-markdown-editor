@@ -1,6 +1,16 @@
-# 洛谷 Markdown & KaTeX 实时预览编辑器 (Windows 桌面轻量版)
+# 洛谷 Markdown & KaTeX 实时预览编辑器
 
 一款专为洛谷算法竞赛选手、学术创作者、题解撰写者量身打造的**轻量级、所见即所得、支持 KaTeX 与全部洛谷扩展语法的实时双栏 Markdown 编辑器**。
+
+**▶ [在线使用](https://wudream813.github.io/luogu-markdown-editor/)** ——
+打开即用，无需安装；所有内容仅存于浏览器本地，不上传任何服务器。
+
+**⬇ [下载单文件离线版](https://github.com/wudream813/luogu-markdown-editor/releases/latest)**
+—— 一个 HTML 文件，存到本地双击即可打开，断网可用。
+
+[![CI](https://github.com/wudream813/luogu-markdown-editor/actions/workflows/ci.yml/badge.svg)](https://github.com/wudream813/luogu-markdown-editor/actions/workflows/ci.yml)
+[![Pages](https://github.com/wudream813/luogu-markdown-editor/actions/workflows/pages.yml/badge.svg)](https://github.com/wudream813/luogu-markdown-editor/actions/workflows/pages.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
@@ -50,6 +60,14 @@
 ## Windows 运行使用指南
 
 本项目提供三种运行方式，均完全开箱即用：
+
+### 方式零：浏览器在线版（最省事）
+
+直接打开 <https://wudream813.github.io/luogu-markdown-editor/>。
+
+这是同一份代码的在线部署，功能与离线版完全一致。文档保存在浏览器
+localStorage 里，**不会上传到任何服务器**；换设备或清理浏览器数据前，
+记得用「导出」功能保存文件。
 
 ### 方式一：单文件免安装离线版（最轻量、推荐）
 - 前往本仓库的 **[Releases](https://github.com/wudream813/luogu-markdown-editor/releases)** 页面，
