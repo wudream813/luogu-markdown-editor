@@ -371,6 +371,24 @@ const safeStorage = {
           // Which source line sits at the TOP of the viewport is what the user sees,
           // so that line — not a percentage of total height — drives the preview.
           const y = this.textarea.scrollTop;
+          // Past the last real line we are inside the tail padding, where no source
+          // line maps any more. Interpolate the remainder straight onto the preview's
+          // own tail so the two still reach their bottoms together.
+          const natural = this.maxNaturalScroll(tops);
+          if (y > natural) {
+            const padSpan = (this.textarea.scrollHeight - this.textarea.clientHeight) - natural;
+            const pmax = this.previewEl.scrollHeight - this.previewEl.clientHeight;
+            const lastTop = this.previewTopForLine(
+              anchors, this.visibleToDocLine(Math.floor(this.visualOffsetToLine(tops, natural))), 0,
+            );
+            const from = lastTop === null ? pmax : Math.max(0, Math.min(pmax, lastTop));
+            const t = padSpan > 0 ? (y - natural) / padSpan : 1;
+            const want = from + (pmax - from) * t;
+            if (Math.abs(this.previewEl.scrollTop - want) > 0.5) {
+              this.previewEl.scrollTop = want;
+            }
+            return;
+          }
           const line = this.visualOffsetToLine(tops, y);
           const docLine = this.visibleToDocLine(Math.floor(line));
           const frac = line - Math.floor(line);
@@ -681,7 +699,7 @@ const safeStorage = {
       // its contents in the preview.
       const markdown = this.getContent();
       const html = this.parser ? this.parser.render(markdown) : '';
-      this.previewEl.innerHTML = html;
+      this.patchPreview(html);
 
       // 3. Restore user-opened states to callouts
       if (openCalloutKeys.size > 0) {
@@ -694,6 +712,12 @@ const safeStorage = {
           }
         });
       }
+
+      // The preview's height just changed, so how far the editor needs to be able to
+      // scroll changed with it.
+      this.syncEditorTailPadding();
+      this._lineTopsKey = null;
+      this.updateLineNumbers();
 
       this.updateStats(markdown);
     }
@@ -724,6 +748,130 @@ const safeStorage = {
     // and above all for scroll sync. A hidden mirror div that copies the
     // textarea's exact typography and width reproduces its wrapping, letting us read
     // real offsets.
+    // Replace the preview's contents WITHOUT blowing away nodes that did not change.
+    //
+    // This used to be a plain `previewEl.innerHTML = html`, which destroys and rebuilds
+    // every node on every keystroke. That is what made a playing Bilibili video revert
+    // to its "click to load" facade the moment you typed anywhere in the document: the
+    // live <iframe> was thrown away with the rest of the DOM.
+    //
+    // An iframe reloads whenever it is detached from the document — even a pure move
+    // within the same parent counts — so the only way to keep playback alive is to
+    // never touch the node at all. We therefore diff the preview's top-level children
+    // and leave matching ones exactly where they are, only inserting/removing around
+    // them.
+    patchPreview(html) {
+      const parent = this.previewEl;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+
+      // Identity of a child for diffing purposes. A loaded video container no longer
+      // looks like the freshly rendered markup (facade button vs. iframe), so those are
+      // keyed by their video URL instead of their markup.
+      const keyOf = (n) => {
+        if (n.nodeType === 3) return `t:${n.data}`;
+        if (n.nodeType !== 1) return `o:${n.nodeName}`;
+        if (n.classList && n.classList.contains('luogu-bilibili-container')) {
+          const holder = n.querySelector('[data-src]');
+          if (holder) return `b:${holder.getAttribute('data-src')}`;
+        }
+        return `h:${n.outerHTML}`;
+      };
+
+      const oldNodes = Array.from(parent.childNodes);
+      const newNodes = Array.from(tpl.content.childNodes);
+      const oldKeys = oldNodes.map(keyOf);
+      const newKeys = newNodes.map(keyOf);
+
+      const drop = (n) => { if (n && n.parentNode === parent) parent.removeChild(n); };
+
+      let oi = 0;
+      // Bounded lookahead keeps this linear; a match further than this away is treated
+      // as "no match" and simply re-rendered, which is correct, just not optimal.
+      const WINDOW = 64;
+      for (let ni = 0; ni < newNodes.length; ni++) {
+        let found = -1;
+        for (let k = oi; k < oldNodes.length && k < oi + WINDOW; k++) {
+          if (oldKeys[k] === newKeys[ni]) { found = k; break; }
+        }
+        if (found === -1) {
+          // Insert before the next surviving old node so relative order is kept.
+          let ref = null;
+          for (let k = oi; k < oldNodes.length; k++) {
+            if (oldNodes[k].parentNode === parent) { ref = oldNodes[k]; break; }
+          }
+          parent.insertBefore(newNodes[ni], ref);
+        } else {
+          for (let k = oi; k < found; k++) drop(oldNodes[k]);
+          oi = found + 1;
+        }
+      }
+      for (let k = oi; k < oldNodes.length; k++) drop(oldNodes[k]);
+
+      // A container that *was* rebuilt (because its own markup changed) comes back as a
+      // facade. If the user had already opted into loading that video, honour it rather
+      // than making them click again.
+      const facades = parent.querySelectorAll('button.luogu-bilibili-facade[data-src]');
+      facades.forEach((btn) => {
+        if (loadedBiliSrcs.has(btn.getAttribute('data-src')) && global.loadBilibiliPlayer) {
+          global.loadBilibiliPlayer(btn);
+        }
+      });
+    }
+
+    // Let the editor scroll past its last line.
+    //
+    // The preview is usually taller than the source that produced it (a two-word line
+    // can render as a 400px video), so the editor would hit its bottom while the
+    // preview still had content below the fold — and scroll sync, having run out of
+    // editor to scroll, could never bring that tail into view. Extending the editor's
+    // scrollable range by the preview's leftover height gives the last stretch of the
+    // document somewhere to map onto.
+    syncEditorTailPadding() {
+      const ta = this.textarea;
+      const pv = this.previewEl;
+      if (!ta || !pv) return;
+      if (this._basePadBottom === undefined) {
+        this._basePadBottom = parseFloat(window.getComputedStyle(ta).paddingBottom) || 0;
+      }
+      const anchors = this.buildScrollAnchors();
+      const lastAnchorTop = anchors.length ? anchors[anchors.length - 1].top : 0;
+      // How much preview is left below the point the last source line maps to.
+      const remaining = Math.max(0, pv.scrollHeight - pv.clientHeight - lastAnchorTop);
+
+      // Enough padding that the LAST line can come to rest at the top of the viewport.
+      // Without this the editor bottoms out while its final line is still halfway down
+      // the screen, maxNaturalScroll sits beyond the reachable scroll range, and the
+      // tail-interpolation branch below can never run — which left the preview stranded
+      // ~59px short of its own bottom.
+      const tops = this.measureLineTops();
+      const contentH = tops.length ? tops[tops.length - 1] : 0;
+      const lastLineTop = tops.length >= 2 ? tops[tops.length - 2] : 0;
+      const padTop = parseFloat(window.getComputedStyle(ta).paddingTop) || 0;
+      const reachLast = Math.max(0, lastLineTop + padTop + ta.clientHeight - contentH - padTop);
+
+      const want = Math.round(this._basePadBottom + Math.max(reachLast, remaining));
+      if (this._tailPad !== want) {
+        this._tailPad = want;
+        ta.style.paddingBottom = `${want}px`;
+      }
+    }
+
+    // The largest scrollTop at which a REAL source line still sits at the top of the
+    // viewport. Past this point the top of the viewport is inside the tail padding,
+    // where no line maps any more and interpolation has to take over.
+    //
+    // Deliberately not "the last line reaches the BOTTOM of the viewport": that point
+    // comes much earlier, and treating it as the boundary handed a large band of
+    // perfectly mappable scroll positions to the interpolation path, which threw
+    // preview alignment off by hundreds of pixels near the end of a document.
+    maxNaturalScroll(tops) {
+      // tops has one entry per line plus a trailing total-height sentinel, so the
+      // start offset of the final line is at length - 2.
+      if (!tops || tops.length < 2) return 0;
+      return Math.max(0, tops[tops.length - 2]);
+    }
+
     measureLineTops() {
       const ta = this.textarea;
       if (!ta) return [];
@@ -2113,9 +2261,15 @@ const safeStorage = {
   // hdslb.com. That broke the "fully offline" guarantee and silently leaked a
   // request — plus third-party tracking cookies — before the user did anything.
   // The player is now only fetched after an explicit click.
+  // Which video URLs the user has explicitly opted into playing. Survives preview
+  // re-renders so an edit elsewhere in the document never demotes a live player back
+  // to its "click to load" facade.
+  const loadedBiliSrcs = new Set();
+
   global.loadBilibiliPlayer = function (btn) {
     const src = btn.getAttribute('data-src');
     if (!src) return;
+    loadedBiliSrcs.add(src);
     const iframe = document.createElement('iframe');
     iframe.setAttribute('src', src);
     iframe.setAttribute('scrolling', 'no');
@@ -2129,6 +2283,9 @@ const safeStorage = {
     // frame to be SAME-origin with its parent; player.bilibili.com never is, so the
     // frame merely regains its own origin and still cannot touch this document.
     iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-presentation');
+    // Mirrored onto the iframe so the preview differ can recognise this subtree as
+    // "the same video" as the facade the next render produces.
+    iframe.setAttribute('data-src', src);
     btn.replaceWith(iframe);
   };
 
