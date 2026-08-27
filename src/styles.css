@@ -427,6 +427,7 @@ html, body {
 }
 
 .line-numbers-gutter {
+  position: relative;
   width: 58px;
   padding: 12px 6px 12px 18px;
   text-align: right;
@@ -434,11 +435,18 @@ html, body {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-muted);
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border-color);
+  background: transparent;
   user-select: none;
-  overflow: hidden;
-  white-space: pre;
+  overflow: visible;
+  will-change: transform;
+  /* Numbers are absolutely positioned at measured offsets because soft-wrapped
+     lines have varying heights. */
+  white-space: nowrap;
+}
+
+.gutter-num-abs {
+  position: absolute;
+  right: 6px;
 }
 
 /* Each gutter row must occupy exactly one text line so the numbers stay aligned
@@ -449,6 +457,10 @@ html, body {
   flex: 0 0 auto;
   display: flex;
   overflow: hidden;
+  /* The number layer and the arrow layer are both translated to follow the
+     textarea's scroll, so this container clips them. */
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
 }
 
 .fold-markers {
@@ -514,12 +526,13 @@ html, body {
   color: var(--text-primary);
   background: var(--bg-editor);
   tab-size: 4;
-  /* No soft-wrap: a long source line stays on ONE row and scrolls horizontally,
-     so each logical line keeps a single gutter line number. (The previous
-     pre-wrap made a long single line wrap into multiple rows.) */
-  white-space: pre;
-  word-wrap: normal;
-  overflow-x: auto;
+  /* Soft-wrap long lines so nothing hides off-screen horizontally. A logical line may
+     now span several visual rows, so the gutter can no longer assume one row per line;
+     it measures each line's real height instead (see measureLineTops). */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 

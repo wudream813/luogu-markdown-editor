@@ -192,14 +192,19 @@
 
     // Extract KaTeX math expressions before markdown parsing
     extractMath(text, store) {
+      // Maps a placeholder id -> how many source lines the original block occupied.
+      if (!this._tokenLines) this._tokenLines = new Map();
       // First, protect fenced code blocks and inline code from math replacement
       const codeTokens = [];
       let tokenIdx = 0;
 
-      // Fenced code blocks
+      // Fenced code blocks. `lines` records how many source lines the fence spanned,
+      // so parseBlocks can advance its line counter by the real amount even though the
+      // placeholder is a single line.
       text = text.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g, (m) => {
         const id = `LUOGUCODEBLOCK${tokenIdx++}END`;
-        codeTokens.push({ id, text: m });
+        codeTokens.push({ id, text: m, lines: m.split('\n').length });
+        this._tokenLines.set(id, m.split('\n').length);
         return id;
       });
 
@@ -215,6 +220,9 @@
       text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
         const id = `LUOGUMATHBLOCK${mathIdx++}END`;
         store.push({ id, type: 'display', formula: formula.trim() });
+        // Same reasoning as fenced code: remember the real span so line numbers stay
+        // faithful even though the placeholder collapses to one line.
+        this._tokenLines.set(id, match.split('\n').length);
         return id;
       });
 
@@ -310,12 +318,47 @@
       // parseBlocks, and shared instance state would leak the inner offset back out
       // and misplace every later sibling's start line.
       const baseLine = lineOffset;
-      const out = [];
+      const rawOut = [];
       let i = 0;
       const n = lines.length;
 
+      // `out` records which source line produced each chunk. Every branch below keeps
+      // using out.push(...) unchanged; the proxy just remembers the value of `i` at
+      // push time. These become scroll anchors in the editor, which is what keeps
+      // tall blocks (code fences, display math, tables) aligned across the panes —
+      // a percentage mapping cannot, since source height and rendered height differ.
+      let pushLine = 0;
+      const out = {
+        push: (chunk) => rawOut.push({ chunk, line: baseLine + pushLine }),
+        get length() { return rawOut.length; },
+      };
+
+      // Precomputed once: srcLineOf[i] is the ORIGINAL document line that the
+      // placeholder-collapsed line `lines[i]` came from. A fenced code block or a
+      // display-math block was replaced by a one-line token earlier, so without this
+      // every block after one of them would report a line number that is too small.
+      // Building the table up front avoids having to keep a parallel counter in sync
+      // with the ~20 separate `i++` sites in this loop.
+      const srcLineOf = new Array(n);
+      {
+        let src = baseLine;
+        const re = /LUOGU(?:CODEBLOCK|MATHBLOCK)\d+END/g;
+        for (let k = 0; k < n; k++) {
+          srcLineOf[k] = src;
+          let span = 1;
+          re.lastIndex = 0;
+          let m;
+          while ((m = re.exec(lines[k])) !== null) {
+            const tokSpan = this._tokenLines && this._tokenLines.get(m[0]);
+            if (tokSpan && tokSpan > span) span = tokSpan;
+          }
+          src += span;
+        }
+      }
+
       while (i < n) {
         const line = lines[i];
+        pushLine = srcLineOf[i] - baseLine;
 
         // 1. Blank line
         if (/^\s*$/.test(line)) {
@@ -347,7 +390,7 @@
         // 3. Luogu Container Blocks (Colons: :::info, :::epigraph, :::align, etc.)
         const colonMatch = line.match(/^(:{3,})([a-zA-Z0-9_\-]+)(?:\[(.*?)\])?(?:\{(.*?)\})?\s*$/);
         if (colonMatch) {
-          const startLine = baseLine + i;
+          const startLine = srcLineOf[i];
           const colons = colonMatch[1];
           const colonLevel = colons.length;
           const type = colonMatch[2].toLowerCase();
@@ -508,7 +551,21 @@
         }
       }
 
-      return out.join('\n');
+      // Attach data-src-line to each top-level element, then flatten. Some renderers
+      // (code blocks) emit leading whitespace before the tag, so match past it rather
+      // than requiring the chunk to start with '<'.
+      return rawOut
+        .map(({ chunk, line }) => {
+          if (typeof chunk !== 'string') return chunk;
+          const m = chunk.match(/^(\s*)<([a-zA-Z][a-zA-Z0-9-]*)/);
+          if (!m) return chunk;
+          if (/^\s*<[a-zA-Z][a-zA-Z0-9-]*[^>]*\sdata-src-line=/.test(chunk)) return chunk;
+          return chunk.replace(
+            /^(\s*)<([a-zA-Z][a-zA-Z0-9-]*)/,
+            `$1<$2 data-src-line="${line}"`
+          );
+        })
+        .join('\n');
     }
 
     // Render Luogu Containers (Callouts, Align, Epigraph)
@@ -925,9 +982,16 @@
       // which would produce illegal HTML (a block <div> inside <p>) and extra empty <p>s.
       if (lines.length === 1) {
         const single = lines[0].replace(/(\s{2,}|\\)$/, '').trim();
-        // Display math placeholder token ($$...$$) extracted earlier.
+        // Display math placeholder token ($$...$$) extracted earlier. Wrapped in a
+        // <div> so the block carries a data-src-line anchor like every other block;
+        // a bare token would slip past the stamper and leave display math unanchored,
+        // which is exactly what made tall formulas drift during scroll sync.
         if (/^LUOGUMATHBLOCK\d+END$/.test(single)) {
-          return single;
+          return `<div class="luogu-math-block-wrap">${single}</div>`;
+        }
+        // Same for a fenced code block standing alone.
+        if (/^LUOGUCODEBLOCK\d+END$/.test(single)) {
+          return `<div class="luogu-code-block-wrap">${single}</div>`;
         }
         // A Bilibili video embed on its own line renders to a block container.
         if (/^!\[[^\]]*\]\(bilibili:[\s\S]*\)$/i.test(single)) {

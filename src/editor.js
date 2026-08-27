@@ -173,12 +173,7 @@ const safeStorage = {
       // Synchronized scrolling
       this.textarea.addEventListener('scroll', () => {
         this.syncScroll('editor');
-        if (this.gutterEl) {
-          this.gutterEl.scrollTop = this.textarea.scrollTop;
-          if (this.foldMarkersEl) {
-            this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
-          }
-        }
+        this.updateGutterScroll();
       });
 
       this.previewEl.addEventListener('scroll', () => {
@@ -258,6 +253,22 @@ const safeStorage = {
           }
         }, true);
       }
+
+      // Wrapping depends on the textarea's width, so remeasure whenever it changes.
+      if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => {
+          this._lineTopsKey = null;
+          this._anchorsKey = null;
+          this.updateLineNumbers();
+        });
+        ro.observe(this.textarea);
+        this._resizeObserver = ro;
+      }
+      window.addEventListener('resize', () => {
+        this._lineTopsKey = null;
+        this._anchorsKey = null;
+        this.updateLineNumbers();
+      });
 
       // Splitter resizer
       this.initSplitter();
@@ -340,40 +351,165 @@ const safeStorage = {
     }
 
     // Synchronize scrolling between editor and preview
+    // Build a sorted list of {srcLine, previewTop} anchors from the rendered blocks.
+    // These pair a source line with where its output actually sits, which is the only
+    // way tall constructs (code fences, display math, wide tables) can stay aligned:
+    // their source height and rendered height are unrelated, so a percentage mapping
+    // is guaranteed to drift.
+    buildScrollAnchors() {
+      if (!this.previewEl) return [];
+      const key = this._renderSeq || 0;
+      if (this._anchorsKey === key && this._anchors) return this._anchors;
+
+      const nodes = this.previewEl.querySelectorAll('[data-src-line]');
+      const baseTop = this.previewEl.getBoundingClientRect().top - this.previewEl.scrollTop;
+      const anchors = [];
+      nodes.forEach((el) => {
+        const line = parseInt(el.getAttribute('data-src-line'), 10);
+        if (!Number.isFinite(line)) return;
+        // Skip anything inside a collapsed <details>: it has no meaningful position.
+        if (el.offsetParent === null && el !== this.previewEl) return;
+        const top = el.getBoundingClientRect().top - baseTop;
+        const prev = anchors[anchors.length - 1];
+        if (prev && prev.line === line) return;
+        anchors.push({ line, top });
+      });
+      anchors.sort((a, b) => a.line - b.line || a.top - b.top);
+
+      this._anchors = anchors;
+      this._anchorsKey = key;
+      return anchors;
+    }
+
+    // Piecewise-linear interpolation between neighbouring anchors.
+    interpolate(anchors, pick, get) {
+      if (!anchors.length) return null;
+      let lo = 0;
+      let hi = anchors.length - 1;
+      if (pick <= get(anchors[0])) return anchors[0];
+      if (pick >= get(anchors[hi])) return anchors[hi];
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (get(anchors[mid]) <= pick) lo = mid; else hi = mid;
+      }
+      return { lo: anchors[lo], hi: anchors[hi] };
+    }
+
     syncScroll(source) {
       if (this.isSyncScrolling) return;
       this.isSyncScrolling = true;
 
-      if (source === 'editor') {
-        const textScroll = this.textarea.scrollTop;
-        const textMax = this.textarea.scrollHeight - this.textarea.clientHeight;
-        if (textMax > 0) {
-          const ratio = textScroll / textMax;
-          const previewMax = this.previewEl.scrollHeight - this.previewEl.clientHeight;
-          this.previewEl.scrollTop = ratio * previewMax;
+      try {
+        const anchors = this.buildScrollAnchors();
+        const tops = this.measureLineTops();
+
+        if (!anchors.length || tops.length < 2) {
+          // Nothing to anchor to (e.g. an empty document); fall back to proportional.
+          this.syncScrollByRatio(source);
+          return;
         }
-      } else if (source === 'preview') {
-        const prevScroll = this.previewEl.scrollTop;
-        const prevMax = this.previewEl.scrollHeight - this.previewEl.clientHeight;
-        if (prevMax > 0) {
-          const ratio = prevScroll / prevMax;
-          const textMax = this.textarea.scrollHeight - this.textarea.clientHeight;
-          this.textarea.scrollTop = ratio * textMax;
-          if (this.gutterEl) {
-            this.gutterEl.scrollTop = this.textarea.scrollTop;
-            if (this.foldMarkersEl) {
-              this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
+
+        if (source === 'editor') {
+          // Which source line sits at the TOP of the viewport is what the user sees,
+          // so that line — not a percentage of total height — drives the preview.
+          const y = this.textarea.scrollTop;
+          const line = this.visualOffsetToLine(tops, y);
+          const docLine = this.visibleToDocLine(Math.floor(line));
+          const frac = line - Math.floor(line);
+          const target = this.previewTopForLine(anchors, docLine, frac);
+          if (target !== null) {
+            const max = this.previewEl.scrollHeight - this.previewEl.clientHeight;
+            this.previewEl.scrollTop = Math.max(0, Math.min(max, target));
+          }
+        } else if (source === 'preview') {
+          const y = this.previewEl.scrollTop;
+          const docLine = this.lineForPreviewTop(anchors, y);
+          if (docLine !== null) {
+            const vis = this.docToVisibleLine(Math.floor(docLine));
+            if (vis !== -1) {
+              const frac = docLine - Math.floor(docLine);
+              const a = tops[vis] || 0;
+              const b = tops[vis + 1] !== undefined ? tops[vis + 1] : a;
+              const target = a + (b - a) * frac;
+              const max = this.textarea.scrollHeight - this.textarea.clientHeight;
+              this.textarea.scrollTop = Math.max(0, Math.min(max, target));
+              this.updateGutterScroll();
             }
-          if (this.foldMarkersEl) {
-            this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
           }
-          }
+        }
+      } finally {
+        clearTimeout(this._syncReleaseTimer);
+        this._syncReleaseTimer = setTimeout(() => { this.isSyncScrolling = false; }, 50);
+      }
+    }
+
+    // Fallback used only when there are no anchors at all.
+    syncScrollByRatio(source) {
+      if (source === 'editor') {
+        const max = this.textarea.scrollHeight - this.textarea.clientHeight;
+        if (max > 0) {
+          const r = this.textarea.scrollTop / max;
+          this.previewEl.scrollTop = r * (this.previewEl.scrollHeight - this.previewEl.clientHeight);
+        }
+      } else {
+        const max = this.previewEl.scrollHeight - this.previewEl.clientHeight;
+        if (max > 0) {
+          const r = this.previewEl.scrollTop / max;
+          this.textarea.scrollTop = r * (this.textarea.scrollHeight - this.textarea.clientHeight);
+          this.updateGutterScroll();
         }
       }
+    }
 
-      setTimeout(() => {
-        this.isSyncScrolling = false;
-      }, 50);
+    // Pixel offset in the textarea -> fractional line index.
+    visualOffsetToLine(tops, y) {
+      let lo = 0;
+      let hi = tops.length - 2;
+      if (y <= tops[0]) return 0;
+      if (y >= tops[hi]) return hi;
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (tops[mid] <= y) lo = mid; else hi = mid;
+      }
+      const a = tops[lo];
+      const b = tops[lo + 1];
+      return b > a ? lo + (y - a) / (b - a) : lo;
+    }
+
+    // Source line (+fraction) -> preview pixel offset, interpolating between anchors.
+    previewTopForLine(anchors, line, frac) {
+      if (line <= anchors[0].line) return anchors[0].top;
+      const last = anchors[anchors.length - 1];
+      if (line >= last.line) return last.top;
+      let lo = 0;
+      let hi = anchors.length - 1;
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (anchors[mid].line <= line) lo = mid; else hi = mid;
+      }
+      const A = anchors[lo];
+      const B = anchors[hi];
+      const span = B.line - A.line;
+      const t = span > 0 ? (line + frac - A.line) / span : 0;
+      return A.top + (B.top - A.top) * Math.max(0, Math.min(1, t));
+    }
+
+    // Preview pixel offset -> source line (+fraction).
+    lineForPreviewTop(anchors, y) {
+      if (y <= anchors[0].top) return anchors[0].line;
+      const last = anchors[anchors.length - 1];
+      if (y >= last.top) return last.line;
+      let lo = 0;
+      let hi = anchors.length - 1;
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1;
+        if (anchors[mid].top <= y) lo = mid; else hi = mid;
+      }
+      const A = anchors[lo];
+      const B = anchors[hi];
+      const span = B.top - A.top;
+      const t = span > 0 ? (y - A.top) / span : 0;
+      return A.line + (B.line - A.line) * Math.max(0, Math.min(1, t));
     }
 
     // Keydown shortcuts
@@ -571,6 +707,11 @@ const safeStorage = {
           }
         });
       }
+
+      // Invalidate cached scroll anchors and line measurements: the DOM is about to
+      // change, so any cached geometry is stale.
+      this._renderSeq = (this._renderSeq || 0) + 1;
+      this._lineTopsKey = null;
 
       // 2. Render new HTML.
       // getContent() (not textarea.value) so a collapsed ::: block still renders
@@ -819,6 +960,62 @@ const safeStorage = {
       this.afterFoldChange();
     }
 
+    // Measure the top offset (in content pixels) of every logical line in the
+    // textarea. With soft-wrap enabled a line can occupy several visual rows, so a
+    // uniform lineHeight multiplication is no longer valid — for the gutter, for the
+    // fold arrows, and above all for scroll sync. A hidden mirror div that copies the
+    // textarea's exact typography and width reproduces its wrapping, letting us read
+    // real offsets.
+    measureLineTops() {
+      const ta = this.textarea;
+      if (!ta) return [];
+      const text = ta.value;
+      const width = ta.clientWidth;
+      const cacheKey = `${text.length}\u0000${width}\u0000${text.length && text.charCodeAt(0)}`;
+      if (this._lineTopsKey === cacheKey && this._lineTops) return this._lineTops;
+
+      let mirror = this._mirrorEl;
+      if (!mirror) {
+        mirror = document.createElement('div');
+        mirror.setAttribute('aria-hidden', 'true');
+        mirror.style.cssText =
+          'position:absolute;visibility:hidden;pointer-events:none;top:0;left:-99999px;';
+        document.body.appendChild(mirror);
+        this._mirrorEl = mirror;
+      }
+
+      const cs = window.getComputedStyle(ta);
+      // Copy every property that can influence line breaking.
+      [
+        'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'letterSpacing',
+        'lineHeight', 'textTransform', 'wordSpacing', 'whiteSpace',
+        'overflowWrap', 'wordBreak', 'tabSize', 'textIndent',
+      ].forEach((k) => { mirror.style[k] = cs[k]; });
+      mirror.style.width = `${width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)}px`;
+      mirror.style.padding = '0';
+      mirror.style.border = '0';
+
+      const lines = text.split('\n');
+      // One span per line; a trailing zero-width space keeps empty lines measurable.
+      mirror.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      const spans = lines.map((ln) => {
+        const el = document.createElement('div');
+        el.textContent = ln.length ? ln : '\u200b';
+        frag.appendChild(el);
+        return el;
+      });
+      mirror.appendChild(frag);
+
+      const base = mirror.getBoundingClientRect().top;
+      const tops = spans.map((el) => el.getBoundingClientRect().top - base);
+      tops.push(mirror.getBoundingClientRect().height);
+
+      this._lineTops = tops;
+      this._lineTopsKey = cacheKey;
+      return tops;
+    }
+
     // Pin the gutter's row height to the textarea's actual computed line-height.
     // Any CSS-side approximation rounds slightly differently and accumulates into a
     // visible offset on long documents.
@@ -865,13 +1062,16 @@ const safeStorage = {
         }
       }
 
-      // Numbers stay as plain text in a `white-space: pre` block. Wrapping each line
-      // in its own element made the browser snap every row to 1/64px, which drifted
-      // ~2px over 600 lines; a single text node inherits the textarea's exact line
-      // boxes. Fold arrows therefore live in a separate absolutely-positioned layer.
-      let str = '';
-      for (let i = 1; i <= count; i++) str += i + '\n';
-      this.gutterEl.textContent = str;
+      // Soft-wrap means a logical line can span several visual rows, so both the
+      // numbers and the fold arrows are positioned at measured offsets rather than
+      // at index * lineHeight.
+      const tops = this.measureLineTops();
+      const numParts = [];
+      for (let i = 0; i < count; i++) {
+        numParts.push(`<span class="gutter-num-abs" style="top:${(tops[i] || 0).toFixed(2)}px">${i + 1}</span>`);
+      }
+      this.gutterEl.innerHTML = numParts.join('');
+      this.gutterEl.style.height = `${tops[tops.length - 1] || 0}px`;
 
       if (this.foldMarkersEl) {
         const lh = parseFloat(this._gutterLineHeight || '20.8');
@@ -879,14 +1079,21 @@ const safeStorage = {
         foldable.forEach((state, line) => {
           parts.push(
             `<span class="fold-toggle ${state}" data-line="${line}" role="button" tabindex="0" ` +
-            `style="top:${(line * lh).toFixed(3)}px;height:${lh.toFixed(3)}px" ` +
+            `style="top:${(tops[line] || 0).toFixed(2)}px;height:${lh.toFixed(2)}px" ` +
             `aria-expanded="${state === 'open'}" ` +
             `aria-label="${state === 'open' ? '折叠' : '展开'}此区块">▾</span>`
           );
         });
         this.foldMarkersEl.innerHTML = parts.join('');
-        this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
       }
+      this.updateGutterScroll();
+    }
+
+    // Keep the gutter's numbers and fold arrows aligned with the textarea's scroll.
+    updateGutterScroll() {
+      const y = this.textarea ? this.textarea.scrollTop : 0;
+      if (this.gutterEl) this.gutterEl.style.transform = `translateY(${-y}px)`;
+      if (this.foldMarkersEl) this.foldMarkersEl.style.transform = `translateY(${-y}px)`;
     }
 
     // Update Document Statistics
