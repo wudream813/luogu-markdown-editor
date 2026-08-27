@@ -47,6 +47,9 @@ const safeStorage = {
       this.currentMode = 'split'; // 'split' | 'editor-only' | 'preview-only'
       this.currentTheme = 'luogu';
       this.isSyncScrolling = false;
+      // Collapsed ::: blocks: visible line index -> parked inner lines.
+      this.folds = new Map();
+      this._suppressFoldSync = false;
       this.undoStack = [];
       this.redoStack = [];
       this.maxHistory = 100;
@@ -74,6 +77,7 @@ const safeStorage = {
       this.textarea = document.getElementById('editorTextarea');
       this.previewEl = document.getElementById('previewContent');
       this.gutterEl = document.getElementById('lineNumbersGutter');
+      this.foldMarkersEl = document.getElementById('foldMarkers');
       this.docNameInput = document.getElementById('docNameInput');
 
       if (!this.textarea || !this.previewEl) {
@@ -105,6 +109,9 @@ const safeStorage = {
       this.setupPrintHooks();
       this.initMathCheatsheet();
       this.render();
+      // Mirror each block's declared default ({open} => expanded) on the source side,
+      // so both panes start in the same state.
+      this.applyDefaultFolds();
       this.updateLineNumbers();
     }
 
@@ -144,6 +151,16 @@ const safeStorage = {
         return 120;
       };
       this.textarea.addEventListener('input', () => {
+        // Fold bookkeeping is keyed by line index, so any edit that changes the line
+        // structure would silently misplace the parked lines. Rather than attempt a
+        // fragile remap, expand everything on the first edit — the user keeps their
+        // text, and the folds can be re-applied afterwards.
+        if (this.folds.size > 0) {
+          const keys = Array.from(this.folds.keys()).sort((a, b) => b - a);
+          keys.forEach((k) => this.unfoldAt(k, { silent: true }));
+          this.updateLineNumbers();
+          this.syncPreviewOpenStateFromFolds();
+        }
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
           this.pushHistory();
@@ -158,6 +175,9 @@ const safeStorage = {
         this.syncScroll('editor');
         if (this.gutterEl) {
           this.gutterEl.scrollTop = this.textarea.scrollTop;
+          if (this.foldMarkersEl) {
+            this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
+          }
         }
       });
 
@@ -196,6 +216,48 @@ const safeStorage = {
         }
         this.openLocalFile(file);
       });
+
+      // Fold toggles in the line-number gutter.
+      if (this.foldMarkersEl) {
+        this.foldMarkersEl.addEventListener('click', (e) => {
+          const t = e.target.closest('.fold-toggle');
+          if (!t) return;
+          e.preventDefault();
+          this.toggleFoldAt(parseInt(t.getAttribute('data-line'), 10));
+        });
+        this.foldMarkersEl.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          const t = e.target.closest('.fold-toggle');
+          if (!t) return;
+          e.preventDefault();
+          this.toggleFoldAt(parseInt(t.getAttribute('data-line'), 10));
+        });
+      }
+
+      // Record genuine user gestures on a callout's summary so onPreviewToggle can
+      // distinguish them from render-time echoes.
+      if (this.previewEl) {
+        const markIntent = (e) => {
+          if (e.target.closest && e.target.closest('details.luogu-callout[data-src-line] > summary')) {
+            this._userToggleAt = Date.now();
+          }
+        };
+        this.previewEl.addEventListener('click', markIntent, true);
+        this.previewEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') markIntent(e);
+        }, true);
+      }
+
+      // Preview -> source: <details> fires `toggle`, which does not bubble, so it is
+      // captured instead of relying on delegation.
+      if (this.previewEl) {
+        this.previewEl.addEventListener('toggle', (e) => {
+          const d = e.target;
+          if (d && d.matches && d.matches('details.luogu-callout[data-src-line]')) {
+            this.onPreviewToggle(d);
+          }
+        }, true);
+      }
 
       // Splitter resizer
       this.initSplitter();
@@ -299,6 +361,12 @@ const safeStorage = {
           this.textarea.scrollTop = ratio * textMax;
           if (this.gutterEl) {
             this.gutterEl.scrollTop = this.textarea.scrollTop;
+            if (this.foldMarkersEl) {
+              this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
+            }
+          if (this.foldMarkersEl) {
+            this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
+          }
           }
         }
       }
@@ -504,8 +572,10 @@ const safeStorage = {
         });
       }
 
-      // 2. Render new HTML
-      const markdown = this.textarea.value;
+      // 2. Render new HTML.
+      // getContent() (not textarea.value) so a collapsed ::: block still renders
+      // its contents in the preview.
+      const markdown = this.getContent();
       const html = this.parser ? this.parser.render(markdown) : '';
       this.previewEl.innerHTML = html;
 
@@ -524,9 +594,247 @@ const safeStorage = {
       this.updateStats(markdown);
     }
 
+    // ================================================================
+    // Source-side folding for ::: container blocks
+    // ----------------------------------------------------------------
+    // A <textarea> cannot hide individual lines, so a collapsed block's inner
+    // lines are physically removed from the textarea and parked in `this.folds`,
+    // keyed by the block's opening line. Everything that needs the real document
+    // (rendering, saving, exporting, stats) goes through getContent(), which
+    // re-inserts the parked lines. The editor stylesheet uses `white-space: pre`,
+    // so one logical line is always exactly one visual row — which is what makes
+    // the line-number gutter and the fold markers line up.
+    // ================================================================
+
+    // Scan text for ::: blocks. Returns [{start, end, level, type, open}] with
+    // line indices into the *given* text, outermost blocks first.
+    scanContainers(text) {
+      const lines = text.split('\n');
+      const stack = [];
+      const found = [];
+      for (let i = 0; i < lines.length; i++) {
+        const openM = lines[i].match(/^(:{3,})([a-zA-Z0-9_-]+)(?:\[(.*?)\])?(?:\{(.*?)\})?\s*$/);
+        if (openM) {
+          stack.push({
+            start: i,
+            level: openM[1].length,
+            type: openM[2].toLowerCase(),
+            open: (openM[4] || '').toLowerCase().includes('open'),
+          });
+          continue;
+        }
+        const closeM = lines[i].match(/^(:{3,})\s*$/);
+        if (closeM && stack.length) {
+          // Match the innermost block with the same colon count.
+          for (let k = stack.length - 1; k >= 0; k--) {
+            if (stack[k].level === closeM[1].length) {
+              const blk = stack.splice(k, 1)[0];
+              blk.end = i;
+              found.push(blk);
+              break;
+            }
+          }
+        }
+      }
+      return found.sort((a, b) => a.start - b.start);
+    }
+
+    // The full document, with every collapsed block's lines restored.
+    getContent() {
+      if (!this.folds || this.folds.size === 0) return this.textarea.value;
+      const lines = this.textarea.value.split('\n');
+      const out = [];
+      for (let i = 0; i < lines.length; i++) {
+        out.push(lines[i]);
+        const hidden = this.folds.get(i);
+        if (hidden) out.push(...hidden);
+      }
+      return out.join('\n');
+    }
+
+    // Map a line index in the *visible* textarea to its index in the full document.
+    visibleToDocLine(visIdx) {
+      if (!this.folds || this.folds.size === 0) return visIdx;
+      let doc = 0;
+      for (let v = 0; v < visIdx; v++) {
+        doc += 1;
+        const hidden = this.folds.get(v);
+        if (hidden) doc += hidden.length;
+      }
+      return doc;
+    }
+
+    // Map a full-document line index back to the visible textarea, or -1 if that
+    // line is currently hidden inside a collapsed block.
+    docToVisibleLine(docIdx) {
+      if (!this.folds || this.folds.size === 0) return docIdx;
+      let doc = 0;
+      const total = this.textarea.value.split('\n').length;
+      for (let v = 0; v < total; v++) {
+        if (doc === docIdx) return v;
+        doc += 1;
+        const hidden = this.folds.get(v);
+        if (hidden) {
+          if (docIdx < doc + hidden.length) return -1; // inside a collapsed block
+          doc += hidden.length;
+        }
+      }
+      return -1;
+    }
+
+    // Collapse the block whose opening line is at visible index `visLine`.
+    foldAt(visLine, { silent = false } = {}) {
+      if (this.folds.has(visLine)) return false;
+      const lines = this.textarea.value.split('\n');
+      const openM = (lines[visLine] || '').match(/^(:{3,})[a-zA-Z0-9_-]+/);
+      if (!openM) return false;
+
+      const level = openM[1].length;
+      let end = -1;
+      const nest = [];
+      for (let i = visLine + 1; i < lines.length; i++) {
+        const o = lines[i].match(/^(:{3,})[a-zA-Z0-9_-]+/);
+        if (o) { nest.push(o[1].length); continue; }
+        const c = lines[i].match(/^(:{3,})\s*$/);
+        if (c) {
+          if (nest.length && nest[nest.length - 1] === c[1].length) { nest.pop(); continue; }
+          if (c[1].length === level) { end = i; break; }
+        }
+      }
+      if (end === -1) return false;               // unterminated block: nothing to fold
+      if (end === visLine + 1) return false;      // empty block: folding would be a no-op
+
+      // Park the inner lines (excluding the closing marker, which stays visible so
+      // the block's extent is still obvious).
+      const hidden = lines.splice(visLine + 1, end - visLine - 1);
+      this.folds.set(visLine, hidden);
+      this.textarea.value = lines.join('\n');
+      if (!silent) this.afterFoldChange();
+      return true;
+    }
+
+    // Expand the block collapsed at visible index `visLine`.
+    unfoldAt(visLine, { silent = false } = {}) {
+      const hidden = this.folds.get(visLine);
+      if (!hidden) return false;
+      const lines = this.textarea.value.split('\n');
+      lines.splice(visLine + 1, 0, ...hidden);
+      this.folds.delete(visLine);
+
+      // Fold keys are visible-line indices, so every key after this block shifts.
+      const remapped = new Map();
+      this.folds.forEach((v, k) => remapped.set(k > visLine ? k + hidden.length : k, v));
+      this.folds = remapped;
+
+      this.textarea.value = lines.join('\n');
+      if (!silent) this.afterFoldChange();
+      return true;
+    }
+
+    toggleFoldAt(visLine) {
+      if (this.folds.has(visLine)) this.unfoldAt(visLine);
+      else this.foldAt(visLine);
+    }
+
+    afterFoldChange() {
+      this.updateLineNumbers();
+      this.syncPreviewOpenStateFromFolds();
+      this.autoSave();
+    }
+
+    // Push source fold state onto the preview's <details> elements.
+    syncPreviewOpenStateFromFolds() {
+      if (!this.previewEl || this._suppressFoldSync) return;
+      this._suppressFoldSync = true;
+      try {
+        this.previewEl.querySelectorAll('details.luogu-callout[data-src-line]').forEach((d) => {
+          const docLine = parseInt(d.getAttribute('data-src-line'), 10);
+          const vis = this.docToVisibleLine(docLine);
+          if (vis === -1) return;                       // nested inside a collapsed block
+          const collapsed = this.folds.has(vis);
+          if (collapsed && d.hasAttribute('open')) d.removeAttribute('open');
+          else if (!collapsed && !d.hasAttribute('open')) d.setAttribute('open', '');
+        });
+      } finally {
+        this._suppressFoldSync = false;
+      }
+    }
+
+    // Preview -> source: a <details> was toggled by the user.
+    onPreviewToggle(detailsEl) {
+      if (this._suppressFoldSync) return;
+      const attr = detailsEl.getAttribute('data-src-line');
+      if (attr === null) return;
+      const vis = this.docToVisibleLine(parseInt(attr, 10));
+      if (vis === -1) return;
+
+      // `toggle` also fires when a <details> is merely inserted or updated during a
+      // re-render, which is not user intent — acting on those echoes made the preview
+      // silently unfold the source on every render. A genuine toggle is always
+      // preceded by a click/keypress on the summary, so require that gesture.
+      if (this._userToggleAt === undefined || Date.now() - this._userToggleAt > 1000) return;
+      this._userToggleAt = undefined;
+
+      const collapsed = this.folds.has(vis);
+      if (detailsEl.hasAttribute('open') === !collapsed) return;
+
+      this._suppressFoldSync = true;
+      try {
+        if (detailsEl.hasAttribute('open')) this.unfoldAt(vis, { silent: true });
+        else this.foldAt(vis, { silent: true });
+        this.updateLineNumbers();
+        this.autoSave();
+      } finally {
+        this._suppressFoldSync = false;
+      }
+    }
+
+    // Apply each block's default state ({open} => expanded) to the source side.
+    applyDefaultFolds() {
+      const blocks = this.scanContainers(this.textarea.value);
+      // Fold innermost-last so indices stay valid while we mutate the text.
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i];
+        const FOLDABLE = ['info', 'success', 'warning', 'error'];
+        if (!FOLDABLE.includes(b.type)) continue;
+        if (b.open) continue;                     // {open} => leave expanded
+        this.foldAt(b.start, { silent: true });
+      }
+      this.updateLineNumbers();
+    }
+
+    unfoldAll() {
+      const keys = Array.from(this.folds.keys()).sort((a, b) => b - a);
+      keys.forEach((k) => this.unfoldAt(k, { silent: true }));
+      this.afterFoldChange();
+    }
+
+    foldAll() {
+      const blocks = this.scanContainers(this.textarea.value);
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i];
+        const FOLDABLE = ['info', 'success', 'warning', 'error'];
+        if (FOLDABLE.includes(b.type)) this.foldAt(b.start, { silent: true });
+      }
+      this.afterFoldChange();
+    }
+
+    // Pin the gutter's row height to the textarea's actual computed line-height.
+    // Any CSS-side approximation rounds slightly differently and accumulates into a
+    // visible offset on long documents.
+    syncGutterMetrics() {
+      if (!this.gutterEl || !this.textarea) return;
+      const lh = window.getComputedStyle(this.textarea).lineHeight;
+      if (lh && lh !== 'normal' && lh !== this._gutterLineHeight) {
+        this._gutterLineHeight = lh;
+        this.gutterEl.style.setProperty('--editor-line-height', lh);
+      }
+    }
+
     // Update Line Numbers Gutter - High performance single-pass
     updateLineNumbers() {
       if (!this.gutterEl || !this.textarea) return;
+      this.syncGutterMetrics();
       // Treat a single trailing newline as a line terminator, not a phantom blank
       // line. e.g. pasting "sentence\n" should show ONE line number ("1"), not
       // "1\n2", because the content is genuinely a single line. (Copying a whole
@@ -537,12 +845,48 @@ const safeStorage = {
       }
       const lines = text.split('\n');
       const count = Math.max(lines.length, 1);
-      
-      let str = '';
-      for (let i = 1; i <= count; i++) {
-        str += i + '\n';
+
+      // Which visible lines open a ::: block (and are therefore foldable)?
+      const foldable = new Map(); // visible line -> 'open' | 'closed'
+      const stack = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (this.folds.has(i)) { foldable.set(i, 'closed'); continue; }
+        const o = lines[i].match(/^(:{3,})([a-zA-Z0-9_-]+)/);
+        if (o) { stack.push({ line: i, level: o[1].length }); continue; }
+        const c = lines[i].match(/^(:{3,})\s*$/);
+        if (c && stack.length) {
+          for (let k = stack.length - 1; k >= 0; k--) {
+            if (stack[k].level === c[1].length) {
+              const blk = stack.splice(k, 1)[0];
+              if (i > blk.line + 1) foldable.set(blk.line, 'open');
+              break;
+            }
+          }
+        }
       }
+
+      // Numbers stay as plain text in a `white-space: pre` block. Wrapping each line
+      // in its own element made the browser snap every row to 1/64px, which drifted
+      // ~2px over 600 lines; a single text node inherits the textarea's exact line
+      // boxes. Fold arrows therefore live in a separate absolutely-positioned layer.
+      let str = '';
+      for (let i = 1; i <= count; i++) str += i + '\n';
       this.gutterEl.textContent = str;
+
+      if (this.foldMarkersEl) {
+        const lh = parseFloat(this._gutterLineHeight || '20.8');
+        const parts = [];
+        foldable.forEach((state, line) => {
+          parts.push(
+            `<span class="fold-toggle ${state}" data-line="${line}" role="button" tabindex="0" ` +
+            `style="top:${(line * lh).toFixed(3)}px;height:${lh.toFixed(3)}px" ` +
+            `aria-expanded="${state === 'open'}" ` +
+            `aria-label="${state === 'open' ? '折叠' : '展开'}此区块">▾</span>`
+          );
+        });
+        this.foldMarkersEl.innerHTML = parts.join('');
+        this.foldMarkersEl.style.transform = `translateY(${-this.textarea.scrollTop}px)`;
+      }
     }
 
     // Update Document Statistics
@@ -569,7 +913,8 @@ const safeStorage = {
 
     // Auto save draft to LocalStorage
     autoSave() {
-      const content = this.textarea.value;
+      // Always persist the FULL document; folding is a view state, not an edit.
+      const content = this.getContent();
       const ok = safeStorage.setItem('luogu_editor_draft', content);
       const saveStatus = document.getElementById('saveStatusIndicator');
 
@@ -597,14 +942,14 @@ const safeStorage = {
     }
 
     // Get & Set content
-    getContent() {
-      return this.textarea.value;
-    }
 
     setContent(content, pushHistory = true) {
+      // Replacing the document invalidates every parked fold.
+      this.folds = new Map();
       this.textarea.value = content;
       if (pushHistory) this.pushHistory();
       this.render();
+      this.applyDefaultFolds();
       this.updateLineNumbers();
       this.autoSave();
     }
@@ -762,7 +1107,7 @@ const safeStorage = {
       // Update textarea and history without triggering preview rebuild
       this.textarea.value = lines.join('\n');
       this.pushHistory();
-      this.updateStats(this.textarea.value);
+      this.updateStats(this.getContent());
       this.autoSave();
     }
 
@@ -1021,7 +1366,7 @@ const safeStorage = {
       const container = document.getElementById('linterReportBody');
       if (!container) return;
 
-      const markdown = this.textarea.value;
+      const markdown = this.getContent();
       const result = this.linter.lint(markdown);
 
       if (result.isPerfect) {
@@ -1210,7 +1555,7 @@ const safeStorage = {
     }
 
     saveMarkdownFile() {
-      const content = this.textarea.value;
+      const content = this.getContent();
       const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1225,7 +1570,7 @@ const safeStorage = {
 
     // One-click copy for Luogu
     copyLuoguMarkdown() {
-      const content = this.textarea.value;
+      const content = this.getContent();
       navigator.clipboard.writeText(content).then(() => {
         this.showToast('已复制洛谷标准 Markdown 源码，可直接粘贴到洛谷发布！', 'success');
       }).catch(err => {
@@ -1235,7 +1580,7 @@ const safeStorage = {
 
     // Export Standalone HTML (Ultra Polish & High Aesthetics)
     async exportStandaloneHTML() {
-      const markdown = this.textarea.value;
+      const markdown = this.getContent();
       let renderedHtml = this.parser.render(markdown);
       
       // Make all task checkboxes disabled in exported HTML

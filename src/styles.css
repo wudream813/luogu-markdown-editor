@@ -427,8 +427,8 @@ html, body {
 }
 
 .line-numbers-gutter {
-  width: 44px;
-  padding: 12px 6px 12px 0;
+  width: 58px;
+  padding: 12px 6px 12px 18px;
   text-align: right;
   font-family: var(--font-mono);
   font-size: 13px;
@@ -439,6 +439,66 @@ html, body {
   user-select: none;
   overflow: hidden;
   white-space: pre;
+}
+
+/* Each gutter row must occupy exactly one text line so the numbers stay aligned
+   with the textarea (which uses white-space: pre, i.e. one row per logical line). */
+/* Stacking context for the number column + the fold-arrow overlay. */
+.gutter-stack {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  overflow: hidden;
+}
+
+.fold-markers {
+  position: absolute;
+  top: 12px;   /* matches .line-numbers-gutter padding-top */
+  left: 2px;
+  width: 14px;
+  height: 100%;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* Fold arrow for ::: blocks. Absolutely positioned at line * lineHeight, so it
+   never participates in the gutter's text layout and cannot perturb alignment. */
+.fold-toggle {
+  position: absolute;
+  left: 0;
+  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: color 0.15s, background 0.15s;
+}
+
+.fold-toggle:hover {
+  color: var(--luogu-blue);
+  background: rgba(52, 152, 219, 0.15);
+}
+
+.fold-toggle:focus-visible {
+  outline: 2px solid var(--luogu-blue);
+  outline-offset: 1px;
+}
+
+/* Collapsed: arrow points right. */
+.fold-toggle.closed {
+  transform: rotate(-90deg);
+  color: var(--luogu-blue);
+}
+
+.fold-spacer {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  vertical-align: middle;
 }
 
 .editor-textarea {

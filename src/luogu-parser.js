@@ -302,7 +302,14 @@
     }
 
     // Parse Markdown lines into structured HTML blocks
-    parseBlocks(lines) {
+    // `lineOffset` is the index of `lines[0]` within the whole document. parseBlocks
+    // recurses for nested containers, so without it a nested callout would report a
+    // line number relative to its parent instead of to the document.
+    parseBlocks(lines, lineOffset = 0) {
+      // Deliberately a local, NOT `this.lineOffset`: nested containers recurse into
+      // parseBlocks, and shared instance state would leak the inner offset back out
+      // and misplace every later sibling's start line.
+      const baseLine = lineOffset;
       const out = [];
       let i = 0;
       const n = lines.length;
@@ -340,6 +347,7 @@
         // 3. Luogu Container Blocks (Colons: :::info, :::epigraph, :::align, etc.)
         const colonMatch = line.match(/^(:{3,})([a-zA-Z0-9_\-]+)(?:\[(.*?)\])?(?:\{(.*?)\})?\s*$/);
         if (colonMatch) {
+          const startLine = baseLine + i;
           const colons = colonMatch[1];
           const colonLevel = colons.length;
           const type = colonMatch[2].toLowerCase();
@@ -361,7 +369,10 @@
             i++;
           }
 
-          out.push(this.renderContainerBlock(type, title, param, innerLines));
+          // `startLine` lets the editor pair a rendered callout with the exact
+          // source line that opened it, which is what makes source-side folding and
+          // preview folding stay in sync.
+          out.push(this.renderContainerBlock(type, title, param, innerLines, startLine));
           continue;
         }
 
@@ -501,7 +512,7 @@
     }
 
     // Render Luogu Containers (Callouts, Align, Epigraph)
-    renderContainerBlock(type, title, param, innerLines) {
+    renderContainerBlock(type, title, param, innerLines, startLine = -1) {
       // Align blocks
       if (type === 'align') {
         const alignMode = (param || 'center').toLowerCase();
@@ -526,7 +537,7 @@
       const validTypes = ['info', 'success', 'warning', 'error'];
       const calloutType = validTypes.includes(type) ? type : 'info';
       const isOpen = param.toLowerCase().includes('open');
-      const innerHtml = this.parseBlocks(innerLines);
+      const innerHtml = this.parseBlocks(innerLines, startLine + 1);
 
       // Icon SVGs
       const icons = {
@@ -546,7 +557,7 @@
       const titleContent = title ? this.renderInline(title) : defaultTitles[calloutType];
 
       return `
-        <details class="luogu-callout luogu-callout-${calloutType}" ${isOpen ? 'open' : ''}>
+        <details class="luogu-callout luogu-callout-${calloutType}" ${isOpen ? 'open' : ''}${startLine >= 0 ? ` data-src-line="${startLine}"` : ''}>
           <summary class="luogu-callout-summary">
             <span class="luogu-callout-icon">${icons[calloutType]}</span>
             <span class="luogu-callout-title">${titleContent}</span>
