@@ -112,10 +112,18 @@ luogu-markdown-editor/
 ## 开发
 
 ```bash
-node --test test/          # 运行解析器测试套件
+npm install                # 取 KaTeX / Prism 资源
+node --test test/          # 解析器 / 排版单元测试
 node build-standalone.js   # 构建单文件离线版
 python3 app.py             # 启动本地服务（仅绑定 127.0.0.1）
+
+# 浏览器端套件（需 npx playwright install chromium），针对构建产物运行
+node test/browser/xss.test.js         # XSS 向量回归
+node test/browser/fidelity.test.js    # 渲染保真度
+node test/browser/robustness.test.js  # 畸形输入 / ReDoS
 ```
+
+参与开发请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ### 项目结构
 
@@ -149,4 +157,16 @@ index.html + src/** + assets/**  ──build──▶  LuoguMarkdownEditor.html
   防止 `java\tscript:` 之类的绕过。
 - 原始 HTML 标签一律转义。这既堵住 XSS，也更贴近洛谷真实行为——洛谷本身不渲染
   任意 HTML。
+- KaTeX 的 `trust` 按命令逐条判定，而非整体开启：`\href` / `\url` 复用上面同一套
+  URL 白名单，`\includegraphics`、`\htmlClass` 等能拉取远程资源或注入属性的命令
+  一律拒绝。（早先 `trust: true` 会让公式绕过 URL 检查，产出可点击的
+  `javascript:` 链接。）
 - Bilibili 播放器采用点击后加载，未点击时不会向 bilibili.com 发起任何请求。
+
+上述性质由 `test/browser/xss.test.js` 中的 32 个攻击向量在真实浏览器里持续验证，
+并纳入 CI。发现安全问题请按 [SECURITY.md](SECURITY.md) 私密报告。
+
+### 第三方组件
+
+本项目内联打包了 KaTeX 与 Prism（均为 MIT），版权声明见
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

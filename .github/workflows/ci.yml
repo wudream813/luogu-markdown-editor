@@ -68,6 +68,34 @@ jobs:
           fi
           echo "Build is idempotent."
 
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Build
+        run: node build-standalone.js
+
+      # These run against the real artifact in a real browser, which is the only
+      # place the security properties actually hold or fail: escaping bugs only
+      # show up once the HTML is parsed by a browser.
+      - name: XSS regression suite
+        run: node test/browser/xss.test.js
+
+      - name: Rendering fidelity suite
+        run: node test/browser/fidelity.test.js
+
+      - name: Robustness / ReDoS suite
+        run: node test/browser/robustness.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:

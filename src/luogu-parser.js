@@ -292,11 +292,29 @@
         let rendered = '';
         if (katexLib) {
           const displayMode = item.type === 'display';
-          const opts = { displayMode, throwOnError: false, output: 'htmlAndMathml', trust: true };
+          // `trust: true` enables \href, \url, \includegraphics and \htmlClass etc.
+          // Blanket trust let a formula emit a clickable `javascript:` link, bypassing
+          // the sanitizeUrl() gate that guards ordinary Markdown links. Decide per
+          // command instead: keep the useful ones, and apply the same scheme
+          // allow-list to anything that produces a URL.
+          const opts = {
+            displayMode,
+            throwOnError: false,
+            output: 'htmlAndMathml',
+            trust: (ctx) => {
+              if (ctx.command === '\\href' || ctx.command === '\\url') {
+                const safe = sanitizeUrl(ctx.url);
+                return safe !== '' && safe !== '#';
+              }
+              // \includegraphics pulls a remote resource; \htmlClass/\htmlId/\htmlData
+              // inject attacker-chosen attribute values. Neither is needed for Luogu.
+              return false;
+            },
+          };
           rendered = renderKatexCached(
             katexLib,
             item.formula,
-            `${katexLib.version || 'katex'}\u0001${displayMode}\u0001htmlAndMathml\u0001trust`,
+            `${katexLib.version || 'katex'}\u0001${displayMode}\u0001htmlAndMathml\u0001trust-guarded`,
             opts,
             (e) => `<span class="katex-error" title="${escapeHtml(e.message)}">${escapeHtml(item.formula)}</span>`
           );
@@ -479,6 +497,47 @@
           }
           out.push(this.renderCodeBlock(rawArgs, codeLines.join('\n')));
           continue;
+        }
+
+        // 4b. Indented code blocks (four spaces / one tab).
+        //
+        // These were rendered as ordinary paragraphs, so pasted code silently lost its
+        // formatting and got Markdown-interpreted (asterisks became emphasis, etc.).
+        //
+        // Four-space indentation is also how list continuation lines are written, so
+        // only start a code block where a paragraph could start: at the very top of the
+        // block, or right after a blank line that is itself not inside a list. The list
+        // handler runs earlier and consumes its own continuation lines, so by the time
+        // we get here a leading run of spaces really is a code block.
+        if (/^(?: {4}|\t)/.test(line) && line.trim() !== '') {
+          const prev = i > 0 ? lines[i - 1] : '';
+          const atBlockStart = i === 0 || prev.trim() === '';
+          if (atBlockStart) {
+            const codeLines = [];
+            const startLine = srcLineOf[i];
+            while (i < n) {
+              const cur = lines[i];
+              if (cur.trim() === '') {
+                // A blank line only continues the block if indented code follows.
+                let j = i + 1;
+                while (j < n && lines[j].trim() === '') j++;
+                if (j < n && /^(?: {4}|\t)/.test(lines[j])) {
+                  for (let k = i; k < j; k++) codeLines.push('');
+                  i = j;
+                  continue;
+                }
+                break;
+              }
+              if (!/^(?: {4}|\t)/.test(cur)) break;
+              codeLines.push(cur.replace(/^(?: {4}|\t)/, ''));
+              i++;
+            }
+            const codeHtml = this.renderCodeBlock('', codeLines.join('\n'));
+            out.push(startLine >= 0
+              ? codeHtml.replace(/^(\s*)<div /, `$1<div data-src-line="${startLine}" `)
+              : codeHtml);
+            continue;
+          }
         }
 
         // 5. Headings (# to ######)
@@ -922,6 +981,12 @@
       let i = startIndex;
       const isOrdered = /^\s*\d+\.\s+/.test(lines[i]);
       const listTag = isOrdered ? 'ol' : 'ul';
+      // A list starting at something other than 1 must carry it through as `start`,
+      // otherwise "5. / 6." silently renumbers to 1. / 2. — the numbers are often
+      // meaningful (continuing a list interrupted by a code block, citing step N).
+      const orderedStart = isOrdered
+        ? parseInt((lines[i].match(/^\s*(\d+)\./) || [])[1], 10)
+        : 1;
       const items = [];
       let isTaskList = false;
 
@@ -1014,7 +1079,9 @@
       });
 
       const listClass = isTaskList ? 'luogu-list luogu-task-list' : 'luogu-list';
-      const html = `<${listTag} class="${listClass}">${renderedItems.join('')}</${listTag}>`;
+      const startAttr = (isOrdered && Number.isFinite(orderedStart) && orderedStart !== 1)
+        ? ` start="${orderedStart}"` : '';
+      const html = `<${listTag} class="${listClass}"${startAttr}>${renderedItems.join('')}</${listTag}>`;
 
       return { html, nextIndex: i };
     }
@@ -1070,9 +1137,19 @@
 
       // 1. Protect inline code `...`
       const inlineCodes = [];
-      s = s.replace(/`([^`]+)`/g, (m, code) => {
+      // CommonMark: a code span opens with a run of N backticks and closes with the
+      // next run of exactly N. Matching only single backticks broke ``a ` b`` — the
+      // form used whenever the code itself contains a backtick — leaving stray
+      // delimiters in the output. Longest run first so ``` beats ``.
+      s = s.replace(/(`+)([\s\S]+?)\1(?!`)/g, (m, fence, code) => {
         const id = `LUOGUINLINETOKEN${inlineCodes.length}END`;
-        inlineCodes.push(code);
+        // Per spec one leading+trailing space is stripped, letting ``` ` ``` hold a
+        // bare backtick.
+        let c = code;
+        if (c.length > 2 && c.startsWith(' ') && c.endsWith(' ') && c.trim() !== '') {
+          c = c.slice(1, -1);
+        }
+        inlineCodes.push(c);
         return id;
       });
 

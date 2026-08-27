@@ -132,6 +132,26 @@ function build() {
   const remote = html.match(/(?:https?:)?\/\/(?:cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com)[^"')\s]*/i);
   if (remote) throw new Error(`external CDN reference remains: ${remote[0]}`);
 
+  // The artifact embeds KaTeX and Prism, both MIT. MIT requires the copyright
+  // notice to travel with the code, and this single file is how most users will
+  // receive it — so state it in the file itself rather than only in the repo.
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(baseDir, 'package.json'), 'utf8')).version;
+  const banner = `<!--
+  洛谷 Markdown & KaTeX 实时预览编辑器  v${pkgVersion}
+  https://github.com/wudream813/luogu-markdown-editor
+  Copyright (c) 2026 wudream813 — MIT License
+
+  本文件为离线单文件构建产物，内联了以下 MIT 许可的第三方组件：
+    - KaTeX 0.18.4   Copyright (c) 2013-2020 Khan Academy and other contributors
+                     https://katex.org/            https://github.com/KaTeX/KaTeX/blob/main/LICENSE
+    - Prism 1.30.0   Copyright (c) 2012 Lea Verou
+                     https://prismjs.com/          https://github.com/PrismJS/prism/blob/master/LICENSE
+
+  再分发本文件时请保留此声明。完整条款见仓库 THIRD-PARTY-NOTICES.md。
+-->
+`;
+  html = html.replace(/^(<!DOCTYPE html>\s*\n?)/i, `$1${banner}`);
+
   fs.writeFileSync(outPath, html);
 
   console.log('Inlined stylesheets:');

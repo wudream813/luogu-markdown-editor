@@ -444,3 +444,56 @@ test('display math blocks are never touched by the fixer', () => {
   assert.equal(linter.formatSpacing('$$\nx = 1\n$$'), '$$\nx = 1\n$$');
   assert.equal(linter.formatSpacing('$$\n\\sum_{i=1}^{n} i\n$$'), '$$\n\\sum_{i=1}^{n} i\n$$');
 });
+
+// ------------------------------- CommonMark gaps found in the pre-open-source audit
+
+test('ordered lists keep their starting number', () => {
+  // A list starting at N was renumbered from 1, losing meaning when the numbers
+  // matter (a list continued after a code block, "step 5 of 7", ...).
+  assert.match(render('5. a\n6. b'), /<ol[^>]*start="5"/);
+  assert.doesNotMatch(render('1. a\n2. b'), /start=/); // no redundant start="1"
+});
+
+test('code spans accept multi-backtick fences', () => {
+  // ``a ` b`` is the standard way to put a backtick inside code; matching only
+  // single backticks left stray delimiters in the output.
+  const h = render('`` a ` b ``');
+  assert.match(h, /<code[^>]*>a ` b<\/code>/);
+  assert.doesNotMatch(h, /``/);
+  // One leading+trailing space is stripped so a triple fence can hold a bare
+  // backtick. Keep it inline: at the start of a line ``` opens a fenced block.
+  assert.match(render('x ``` ` ``` y'), /<code[^>]*>`<\/code>/);
+  assert.match(render('`plain`'), /<code[^>]*>plain<\/code>/);
+});
+
+test('indented code blocks are not parsed as paragraphs', () => {
+  // Four-space indentation is a code block; it used to render as prose, so pasted
+  // code lost its formatting and had its asterisks turned into emphasis.
+  assert.match(render('正文\n\n    int a = 1;'), /luogu-code-block/);
+  assert.match(render('    int a;'), /luogu-code-block/);
+  assert.doesNotMatch(render('正文\n\n    a * b * c'), /<em>/);
+  // ...but list continuation lines, which use the same indentation, must not be.
+  assert.doesNotMatch(render('- 项目\n\n    续行内容\n- 项目二'), /luogu-code-block/);
+  assert.doesNotMatch(render('正文\n\n   三个空格'), /luogu-code-block/);
+});
+
+test('KaTeX trust is granted per command, not blanket', () => {
+  // trust:true let a formula emit a clickable javascript: link, bypassing the
+  // sanitizeUrl() gate that protects ordinary Markdown links.
+  const evil = render('$\\href{javascript:alert(1)}{c}$');
+  assert.doesNotMatch(evil, /href="javascript:/i);
+  assert.doesNotMatch(render('$\\url{javascript:alert(1)}$'), /href="javascript:/i);
+  // The positive case (a real https link still renders as a link) needs KaTeX itself,
+  // which this sandbox does not load — it is asserted in the browser suite instead.
+});
+
+test('raw HTML and unsafe URLs stay neutralised', () => {
+  assert.doesNotMatch(render('<img src=x onerror=alert(1)>'), /<img[^>]*onerror=alert/i);
+  assert.doesNotMatch(render('<script>alert(1)</script>'), /<script>alert/i);
+  for (const u of ['javascript:alert(1)', 'JAVASCRIPT:alert(1)', 'java\tscript:alert(1)',
+                   'vbscript:alert(1)', 'data:text/html,<script>alert(1)</script>']) {
+    const h = render(`[x](${u})`);
+    assert.doesNotMatch(h, /href="\s*(javascript|vbscript|data:text\/html)/i, `unsafe URL leaked: ${u}`);
+  }
+  assert.match(render('[x](https://luogu.com.cn)'), /href="https:\/\/luogu\.com\.cn"/);
+});
