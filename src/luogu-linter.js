@@ -81,9 +81,70 @@
     f = f.replace(/\bO\((.*?)\)/g, '\\mathcal{O}($1)');
     f = f.replace(/\\mathcal\{O\}\((.*?)\s*log\s*(.*?)\)/g, '\\mathcal{O}($1 \\log $2)');
 
+    // 7. Wrap bare CJK in \text{}: $中文$ -> $\text{中文}$
+    f = wrapBareCjkInMath(f);
+
     // Clean redundant multiple spaces
     f = f.replace(/ {2,}/g, ' ');
     return f.trim();
+  }
+
+  // Heuristic used ONLY by the autofix (never by the renderer, which always renders):
+  // decide whether "$...$" is a formula or just two currency signs in a sentence.
+  function looksLikeInlineFormula(formula) {
+    const f = (formula || '').trim();
+    if (!f) return false;
+    const bare = f.replace(
+      /\\(?:text|mathrm|mathbf|operatorname|mathcal|mathsf|mathtt|textbf|textit|textstyle|displaystyle)\s*\{[^{}]*\}/g,
+      ''
+    );
+    if (!/[\u4e00-\u9fa5]/.test(bare)) return true;
+    // Sentence punctuation means we are looking at prose between two currency signs.
+    if (/[，。；：、！？“”‘’（）《》【】]/.test(bare)) return false;
+    // A LaTeX signal settles it: definitely a formula.
+    if (/\\[a-zA-Z]+|[_^{}]|[+\-*/=<>]|\\\\/.test(bare)) return true;
+    // Otherwise it is pure CJK such as "$中文$". Treat it as a formula the author
+    // wrote by hand (so the fix can wrap it) unless it looks like currency, i.e. the
+    // run starts or ends with a digit — "$5和$10" pairs "5和" between two prices.
+    return !/^\d|\d$/.test(bare.trim());
+  }
+
+  // Wrap runs of bare CJK inside a formula in \text{}. Chinese already inside
+  // \text{}/\mathrm{}/... is left alone, so running the fix twice is a no-op.
+  function wrapBareCjkInMath(formula) {
+    if (!formula || !/[\u4e00-\u9fa5]/.test(formula)) return formula;
+
+    // Split into "already wrapped" and "everything else" segments, then only
+    // rewrite the latter. A single global regex cannot do this safely because it
+    // has no way to know whether a match sits inside an existing \text{...}.
+    const wrapper =
+      /\\(?:text|mathrm|mathbf|operatorname|mathcal|mathsf|mathtt|textbf|textit)\s*\{[^{}]*\}/g;
+    let out = '';
+    let last = 0;
+    let m;
+    wrapper.lastIndex = 0;
+    while ((m = wrapper.exec(formula)) !== null) {
+      out += wrapPlainSegment(formula.slice(last, m.index));
+      out += m[0];
+      last = m.index + m[0].length;
+    }
+    out += wrapPlainSegment(formula.slice(last));
+    return out;
+  }
+
+  // Wrap each maximal run of CJK (plus the CJK punctuation glued to it) in \text{}.
+  function wrapPlainSegment(seg) {
+    if (!seg || !/[\u4e00-\u9fa5]/.test(seg)) return seg;
+    return seg.replace(
+      /[\u4e00-\u9fa5][\u4e00-\u9fa5\u3000-\u303f\uff01-\uff5e]*/g,
+      (run) => {
+        // Trailing CJK punctuation reads better outside the \text{} block.
+        const mm = run.match(/^([\s\S]*?[\u4e00-\u9fa5])([\u3000-\u303f\uff01-\uff5e]*)$/);
+        const core = mm ? mm[1] : run;
+        const tail = mm ? mm[2] : '';
+        return `\\text{${core}}${tail}`;
+      }
+    );
   }
 
   class LuoguLinter {
@@ -185,16 +246,20 @@
         // 4b. Bare Chinese inside a formula. This renders fine, but the Luogu style
         // guide asks authors to keep prose out of LaTeX, so warn rather than refuse.
         const cjkFormulas = [];
-        const collectCjk = (re) => {
+        const collectCjk = (re, isDisplay) => {
           let m;
           re.lastIndex = 0;
           while ((m = re.exec(line)) !== null) {
-            const body = (m[1] || '').replace(MATH_TEXT_WRAPPERS, '');
-            if (/[\u4e00-\u9fa5]/.test(body)) cjkFormulas.push(m[0].trim().replace(/^[^$]+/, ''));
+            const raw = m[1] || '';
+            const body = raw.replace(MATH_TEXT_WRAPPERS, '');
+            if (!/[\u4e00-\u9fa5]/.test(body)) continue;
+            // Only flag what the autofix can actually fix, so the warning never sticks.
+            if (!isDisplay && !looksLikeInlineFormula(raw)) continue;
+            cjkFormulas.push(m[0].trim().replace(/^[^$]+/, ''));
           }
         };
-        collectCjk(/\$\$([^\$]+?)\$\$/g);
-        collectCjk(/(?:^|[^\\$])\$([^\$\n]+?)\$/g);
+        collectCjk(/\$\$([^\$]+?)\$\$/g, true);
+        collectCjk(/(?:^|[^\\$])\$([^\$\n]+?)\$/g, false);
         if (cjkFormulas.length > 0) {
           const sample = cjkFormulas[0].length > 24
             ? `${cjkFormulas[0].slice(0, 24)}…`
@@ -203,9 +268,9 @@
             line: lineNum,
             type: 'warning',
             title: '公式中包含中文',
-            message: `《洛谷题解规范》建议：中文一般不要放在 LaTeX 公式中（如 ${sample}）。公式仍会正常渲染，但更推荐把中文移到公式外，或用 \\text{中文} 包裹。`,
+            message: `《洛谷题解规范》建议：中文一般不要放在 LaTeX 公式中（如 ${sample}）。公式仍会正常渲染。点击【洛谷排版修复】可自动包裹为 $\\text{中文}$。`,
             rule: 'cjk-in-math',
-            fixable: false
+            fixable: true
           });
         }
 
@@ -498,8 +563,12 @@
           return id;
         });
 
-        // 6. Protect inline math $...$ AFTER display math (and fix symbols inside)
+        // 6. Protect inline math $...$ AFTER display math (and fix symbols inside).
+        // A span that is really two currency signs in prose ("花费$5和$10 元") must be
+        // left completely alone — wrapping its text in \text{} would turn ordinary
+        // prose into a formula.
         line = line.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+          if (!looksLikeInlineFormula(formula)) return match;
           const id = `LUOGUTOKENINLINEMATH${tokenIdx++}END`;
           const fixed = '$' + fixFormulaMathSymbols(formula) + '$';
           tokens.push({ id, val: fixed });

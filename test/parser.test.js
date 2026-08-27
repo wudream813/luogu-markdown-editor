@@ -16,8 +16,19 @@ function loadParser() {
   return new sandbox.window.LuoguParser();
 }
 
+function loadLinter() {
+  const sandbox = { window: {}, document: {}, console };
+  vm.createContext(sandbox);
+  vm.runInContext(
+    fs.readFileSync(path.join(__dirname, '../src/luogu-linter.js'), 'utf8'),
+    sandbox
+  );
+  return new sandbox.window.LuoguLinter();
+}
+
 const parser = loadParser();
 const render = (md) => parser.render(md);
+const linter = loadLinter();
 
 // ---------------------------------------------------------------- security
 
@@ -146,6 +157,38 @@ test('CJK inside a formula still renders', () => {
   for (const md of ['$设x=1$', '$a_{最大}$', '$$设 x = 1$$']) {
     assert.ok(/katex|luogu-math/.test(render(md)), md);
   }
+});
+
+// ------------------------------------------------------- linter autofix (CJK)
+
+test('autofix wraps bare CJK in a formula with \\text{}', () => {
+  assert.match(linter.formatSpacing('$中文$'), /\$\\text\{中文\}\$/);
+  assert.match(linter.formatSpacing('$设x=1$'), /\\text\{设\}x=1/);
+  assert.match(linter.formatSpacing('$a_{最大}$'), /a_\{\\text\{最大\}\}/);
+});
+
+test('autofix leaves already-wrapped CJK alone and is idempotent', () => {
+  for (const src of ['$中文$', '$设x=1$', '$a_{最大}$', '$\\text{设有} n \\text{个点}$']) {
+    const once = linter.formatSpacing(src);
+    assert.equal(linter.formatSpacing(once), once, src);
+    assert.ok(!/\\text\{\\text\{/.test(once), once);
+  }
+});
+
+test('autofix does not turn currency prose into a formula', () => {
+  // "花费$5和$10 元" is two prices, not a formula: it must not gain \text{}.
+  assert.ok(!/\\text\{/.test(linter.formatSpacing('花费$5和$10 元')));
+  assert.ok(!/\\text\{/.test(linter.formatSpacing('价格是$100，另一个是$200')));
+});
+
+test('cjk-in-math warning is raised exactly when the autofix can fix it', () => {
+  const warned = (md) => {
+    const r = linter.lint(md);
+    return (r.issues || r).some((i) => i.rule === 'cjk-in-math');
+  };
+  for (const md of ['$中文$', '$设x=1$', '$$设 x = 1$$']) assert.ok(warned(md), md);
+  // No warning that the fix button could never clear.
+  for (const md of ['$a+b$', '$\\text{设}x=1$', '花费$5和$10 元']) assert.ok(!warned(md), md);
 });
 
 test('renders every corpus case without throwing', () => {
