@@ -428,8 +428,8 @@ html, body {
 
 .line-numbers-gutter {
   position: relative;
-  width: 66px;
-  padding: 12px 24px 12px 8px;
+  width: 52px;
+  padding: 12px 10px 12px 8px;
   text-align: right;
   font-family: var(--font-mono);
   font-size: 13px;
@@ -446,89 +446,24 @@ html, body {
 
 .gutter-num-abs {
   position: absolute;
-  right: 24px;
+  right: 10px;
 }
 
 /* Each gutter row must occupy exactly one text line so the numbers stay aligned
    with the textarea (which uses white-space: pre, i.e. one row per logical line). */
-/* Stacking context for the number column + the fold-arrow overlay. */
+/* Stacking context for the line-number column. */
 .gutter-stack {
   position: relative;
   flex: 0 0 auto;
   display: flex;
   overflow: hidden;
-  /* The number layer and the arrow layer are both translated to follow the
-     textarea's scroll, so this container clips them. */
+  /* The number layer is translated to follow the textarea's scroll, so this
+     container clips it. */
   background: var(--bg-secondary);
   border-right: 1px solid var(--border-color);
 }
 
-.fold-markers {
-  position: absolute;
-  top: 0;
-  /* Right-hand lane, immediately left of the text: the arrow belongs next to the
-     line it folds, not stranded at the editor's outer edge. */
-  right: 1px;
-  width: 20px;
-  height: 100%;
-  pointer-events: none;
-  will-change: transform;
-  z-index: 2;
-}
 
-/* Fold arrow for ::: blocks. Absolutely positioned at a measured offset, so it never
-   participates in the gutter's text layout and cannot perturb alignment. */
-.fold-toggle {
-  position: absolute;
-  left: 0;
-  width: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: auto;
-  cursor: pointer;
-  border-radius: 4px;
-  /* Was 10px in a 14px box, which was essentially invisible. */
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--luogu-blue);
-  background: rgba(52, 152, 219, 0.12);
-  background: color-mix(in srgb, var(--luogu-blue) 12%, transparent);
-  border: 1px solid rgba(52, 152, 219, 0.35);
-  border-color: color-mix(in srgb, var(--luogu-blue) 35%, transparent);
-  transition: color 0.15s, background 0.15s, border-color 0.15s;
-}
-
-.fold-toggle:hover {
-  color: #fff;
-  background: var(--luogu-blue);
-  border-color: var(--luogu-blue);
-}
-
-.fold-toggle:focus-visible {
-  outline: 2px solid var(--luogu-blue);
-  outline-offset: 1px;
-}
-
-/* Collapsed: arrow points right. */
-.fold-toggle.closed {
-  transform: rotate(-90deg);
-}
-
-/* A collapsed block is easy to scroll past, so mark it more strongly. */
-.fold-toggle.closed {
-  background: rgba(52, 152, 219, 0.28);
-  background: color-mix(in srgb, var(--luogu-blue) 28%, transparent);
-  border-color: var(--luogu-blue);
-}
-
-.fold-spacer {
-  display: inline-block;
-  width: 13px;
-  height: 13px;
-  vertical-align: middle;
-}
 
 .editor-textarea {
   flex: 1;
