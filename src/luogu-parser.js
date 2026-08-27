@@ -492,6 +492,7 @@
         // 8. Blockquotes (> ...)
         if (/^\s*>/.test(line)) {
           const quoteLines = [];
+          const quoteStart = srcLineOf[i];
           while (i < n && (/^\s*>/.test(lines[i]) || (quoteLines.length > 0 && !/^\s*$/.test(lines[i]) && !/^(\#{1,6}|[`~]{3,}|\||:{3,})/.test(lines[i].trim())))) {
             if (/^\s*>/.test(lines[i])) {
               quoteLines.push(lines[i].replace(/^\s*>\s?/, ''));
@@ -500,7 +501,10 @@
             }
             i++;
           }
-          const innerHtml = this.parseBlocks(quoteLines);
+          // Without the offset the quote's inner blocks restart their line numbering at
+          // 0, so deep content claims data-src-line="0" and scroll sync jumps to the
+          // top of the document when it reaches them.
+          const innerHtml = this.parseBlocks(quoteLines, quoteStart);
           out.push(`<blockquote class="luogu-blockquote">${innerHtml}</blockquote>`);
           continue;
         }
@@ -582,13 +586,14 @@
       // Align blocks
       if (type === 'align') {
         const alignMode = (param || 'center').toLowerCase();
-        const innerHtml = this.parseBlocks(innerLines);
+        // startLine + 1: innerLines begin on the line after the ::: opener.
+        const innerHtml = this.parseBlocks(innerLines, startLine >= 0 ? startLine + 1 : 0);
         return `<div class="luogu-align-${alignMode}">${innerHtml}</div>`;
       }
 
       // Epigraph block
       if (type === 'epigraph') {
-        const innerHtml = this.parseBlocks(innerLines);
+        const innerHtml = this.parseBlocks(innerLines, startLine >= 0 ? startLine + 1 : 0);
         const authorHtml = title ? `<div class="luogu-epigraph-author">${this.renderInline(title)}</div>` : '';
         return `
           <div class="luogu-epigraph">

@@ -261,3 +261,42 @@ test('render cost stays near-linear in document size', () => {
   const ratio = tLarge / tSmall;
   assert.ok(ratio < 8, `render appears super-linear: 4x size cost ${ratio.toFixed(1)}x`);
 });
+
+test('nested containers report absolute source lines', () => {
+  // A container's inner blocks used to be parsed with the line counter reset to 0, so
+  // content deep in the document claimed data-src-line="0". Scroll sync binary-searches
+  // those anchors, so a bogus 0 sent the preview flying to the top of the document —
+  // the intermittent "bounce" reported against the demo file.
+  const md = [
+    '# 标题',          // line 0
+    '',
+    '正文。',           // line 2
+    '',
+    ':::align[center]', // line 4
+    '居中的一段话。',    // line 5
+    ':::',
+    '',
+    '> 引用第一行',      // line 8
+    '',
+    ':::epigraph[作者]', // line 10
+    '题记正文。',        // line 11
+    ':::',
+  ].join('\n');
+  const html = render(md);
+  const lines = [...html.matchAll(/data-src-line="(\d+)"/g)].map((m) => Number(m[1]));
+
+  // Exactly one anchor may claim line 0 (the H1 itself).
+  assert.equal(lines.filter((l) => l === 0).length, 1,
+    `only the H1 should be line 0, got ${JSON.stringify(lines)}`);
+  // The align/epigraph bodies must land on their real lines, not on 0/1.
+  assert.ok(lines.some((l) => l >= 4), `expected deep anchors, got ${JSON.stringify(lines)}`);
+  assert.ok(lines.some((l) => l >= 10), `epigraph body lost its offset: ${JSON.stringify(lines)}`);
+});
+
+test('blockquote inner content keeps its absolute line', () => {
+  const md = ['# T', '', '前言。', '', '> 引用内容在这里', '> > 嵌套引用'].join('\n');
+  const lines = [...render(md).matchAll(/data-src-line="(\d+)"/g)].map((m) => Number(m[1]));
+  assert.equal(lines.filter((l) => l === 0).length, 1,
+    `blockquote body restarted numbering: ${JSON.stringify(lines)}`);
+  assert.ok(Math.max(...lines) >= 4, `expected an anchor at/after line 4: ${JSON.stringify(lines)}`);
+});

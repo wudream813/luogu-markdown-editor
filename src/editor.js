@@ -320,6 +320,18 @@ const safeStorage = {
       });
       anchors.sort((a, b) => a.line - b.line || a.top - b.top);
 
+      // Both binary searches below (previewTopForLine / lineForPreviewTop) require top
+      // to be non-decreasing as line increases. Legitimate markup can violate that:
+      // inside nested <details>, the innermost content has a high source line but sits
+      // physically above the closing markup of the outer levels. Feeding a
+      // non-monotonic array to a binary search yields an essentially random hit, which
+      // is what threw the preview to a far-off offset (the "bounce"). Clamp each entry
+      // to its predecessor so the sequence is monotonic; a handful of anchors then
+      // share a top, which merely makes the mapping locally flat instead of wrong.
+      for (let i = 1; i < anchors.length; i++) {
+        if (anchors[i].top < anchors[i - 1].top) anchors[i].top = anchors[i - 1].top;
+      }
+
       this._anchors = anchors;
       this._anchorsKey = key;
       return anchors;
