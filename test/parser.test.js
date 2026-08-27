@@ -386,3 +386,38 @@ test('period autofix agrees with the linter and is idempotent', () => {
   // A period belongs only at the END of a wrapped paragraph.
   assert.equal(linter.formatSpacing('第一行\n第二行\n第三行'), '第一行\n第二行\n第三行。');
 });
+
+// ------------------------------------------------- formatSpacing regressions
+
+test('hard line breaks (two trailing spaces) survive formatting', () => {
+  // Collapsing the trailing run to a single space silently removed Markdown's
+  // hard line break and merged the two lines in the rendered output.
+  assert.equal(linter.formatSpacing('第一行  \n第二行。'), '第一行  \n第二行。');
+  // Interior runs are still squeezed.
+  assert.equal(linter.formatSpacing('a    b。'), 'a b。');
+  // A single trailing space is not a hard break and may be trimmed.
+  assert.equal(linter.formatSpacing('结尾。 '), '结尾。');
+});
+
+test('currency spans keep the author spacing', () => {
+  // "$5和$10" is prose between two currency signs, not a formula. It was tokenised
+  // but left as raw text, so the CJK<->Latin spacing rule then saw a bare digit next
+  // to a Chinese character and re-broke it into "花费 $5和$10 元".
+  assert.equal(linter.formatSpacing('花费$5和$10 元。'), '花费$5和$10 元。');
+  // A genuine formula is still processed.
+  assert.equal(linter.formatSpacing('设 $中文$ 成立。'), '设 $\\text{中文}$ 成立。');
+});
+
+test('formatSpacing stays idempotent across these cases', () => {
+  for (const md of [
+    '第一行  \n第二行。',
+    '花费$5和$10 元。',
+    '这是test测试',
+    '你好,世界',
+    '设 $中文$ 成立。',
+    '```cpp\nint a=1;//注释,不改\n```',
+  ]) {
+    const once = linter.formatSpacing(md);
+    assert.equal(linter.formatSpacing(once), once, `not idempotent: ${JSON.stringify(md)}`);
+  }
+});

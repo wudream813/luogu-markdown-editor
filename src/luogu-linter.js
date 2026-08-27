@@ -638,7 +638,14 @@
         // left completely alone — wrapping its text in \text{} would turn ordinary
         // prose into a formula.
         line = line.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
-          if (!looksLikeInlineFormula(formula)) return match;
+          if (!looksLikeInlineFormula(formula)) {
+            // Tokenise it anyway. Leaving the raw "$5和$10" in the line let the later
+            // CJK<->Latin spacing rule see a bare digit next to a Chinese character and
+            // "fix" it into "$5 和$10", re-breaking the currency case on every run.
+            const cid = `LUOGUTOKENCURRENCY${tokenIdx++}END`;
+            tokens.push({ id: cid, val: match });
+            return cid;
+          }
           const id = `LUOGUTOKENINLINEMATH${tokenIdx++}END`;
           const fixed = '$' + fixFormulaMathSymbols(formula) + '$';
           tokens.push({ id, val: fixed });
@@ -675,9 +682,21 @@
         line = line.replace(/([\u4e00-\u9fa5])(\*{1,3}|_{1,3}|~~)([a-zA-Z0-9])/g, '$1 $2$3');
         line = line.replace(/([a-zA-Z0-9])(\*{1,3}|_{1,3}|~~)([\u4e00-\u9fa5])/g, '$1$2 $3');
 
-        // 12. Add halfwidth space between CJK and ASCII Latin/Digits
-        line = line.replace(/([\u4e00-\u9fa5\u3040-\u30ff])([a-zA-Z0-9])/g, '$1 $2');
-        line = line.replace(/([a-zA-Z0-9])([\u4e00-\u9fa5\u3040-\u30ff])/g, '$1 $2');
+        // 12. Add halfwidth space between CJK and ASCII Latin/Digits.
+        // Placeholder tokens are spelled with ASCII letters, so this rule would happily
+        // insert a space between a Chinese character and the token itself. Math and
+        // code tokens are re-spaced deliberately by rule 13 below, but a currency token
+        // must keep the author's original spacing ("花费$5和$10 元"), so skip it here.
+        const CURRENCY_TOKEN = /LUOGUTOKENCURRENCY\d+END/;
+        line = line.replace(/([\u4e00-\u9fa5\u3040-\u30ff])([a-zA-Z0-9])/g, (m, a, b, off, str) => {
+          if (CURRENCY_TOKEN.test(str.slice(off + 1, off + 40))) return m;
+          return `${a} ${b}`;
+        });
+        line = line.replace(/([a-zA-Z0-9])([\u4e00-\u9fa5\u3040-\u30ff])/g, (m, a, b, off, str) => {
+          const before = str.slice(Math.max(0, off - 40), off + 1);
+          if (/LUOGUTOKENCURRENCY\d+END$/.test(before)) return m;
+          return `${a} ${b}`;
+        });
 
         // 13. Spacing around math/code tokens and CJK
         line = line.replace(/([\u4e00-\u9fa5])(LUOGUTOKENINLINEMATH\d+END|LUOGUTOKENCODE\d+END)/g, '$1 $2');
@@ -721,8 +740,14 @@
           }
         }
 
-        // Clean redundant multiple spaces
-        line = line.replace(/ {2,}/g, ' ');
+        // Clean redundant multiple spaces.
+        // Two or more spaces at the END of a line are Markdown's hard line break, so
+        // collapsing them to one silently removed the break and joined the lines in
+        // the rendered output. Preserve the trailing run and squeeze only the interior.
+        {
+          const hardBreak = /[ ]{2,}$/.test(line) ? '  ' : (/[ ]$/.test(line) ? ' ' : '');
+          line = line.replace(/[ ]+$/, '').replace(/ {2,}/g, ' ') + hardBreak;
+        }
 
         // Restore protected tokens (using function callback to prevent $$ replacement in JS)
         for (const token of tokens) {

@@ -1959,11 +1959,38 @@ code[class*="language-"] {
     padding-right: 6px !important;
     margin-right: 6px !important;
     text-align: right !important;
-    color: #8c959f !important;
-    border-right: 1px solid #d0d7de !important;
     user-select: none !important;
     font-size: 8.5pt !important;
     line-height: 1.45 !important;
+  }
+
+  /* The gutter must take its colours from the print mode. The screen rules paint it
+     #282c34 with a #5c6370 number, and the print block only overrode the text colour
+     — so a light PDF got a black gutter stripe running down the side of an otherwise
+     white code block. `position: sticky` is a screen-scrolling affordance and is
+     equally wrong on paper. */
+  .code-line-number {
+    position: static !important;
+  }
+  .print-light .code-line-number {
+    background: #f6f8fa !important;
+    /* #8c959f is 2.85:1 on this background; darkened to clear WCAG AA while staying
+       visibly subordinate to the code itself. */
+    color: #6e7781 !important;
+    border-right: 1px solid #d0d7de !important;
+  }
+  .print-dark .code-line-number {
+    background: #282c34 !important;
+    color: #7f8896 !important;
+    border-right: 1px solid #3e4451 !important;
+  }
+  /* Highlighted rows tint their own gutter cell to match the row. */
+  .print-light .code-line-highlighted .code-line-number {
+    background: #fff8c5 !important;
+    color: #6a5b16 !important;
+  }
+  .print-dark .code-line-highlighted .code-line-number {
+    background: linear-gradient(rgba(229, 192, 123, 0.15), rgba(229, 192, 123, 0.15)), #282c34 !important;
   }
   
   .code-line-text {
@@ -1982,10 +2009,20 @@ code[class*="language-"] {
   .print-light .code-line-text { color: #24292e !important; }
   .print-dark .code-line-text { color: #abb2bf !important; }
   
+  /* A highlighted row gains a 3px left border, so its left padding must drop by
+     exactly 3px to keep the code text on the same x as every other row. The base row
+     uses 6px, so this must be 3px — it said 5px, which pushed highlighted lines 2px
+     right, and the dark mode had no rule at all (a full 3px shift). */
+  .print-light .code-line-highlighted,
+  .print-dark .code-line-highlighted {
+    border-left: 3px solid #d4a72c !important;
+    padding-left: 3px !important;
+  }
   .print-light .code-line-highlighted {
     background: #fff8c5 !important;
-    border-left: 3px solid #d4a72c !important;
-    padding-left: 5px !important;
+  }
+  .print-dark .code-line-highlighted {
+    background: linear-gradient(rgba(229, 192, 123, 0.15), rgba(229, 192, 123, 0.15)), #282c34 !important;
   }
   
   /* Callouts in print: always forced fully open */
