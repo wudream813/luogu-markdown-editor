@@ -1944,8 +1944,10 @@ const safeStorage = {
       iframe.setAttribute('scrolling', 'no');
       iframe.setAttribute('frameborder', 'no');
       iframe.setAttribute('allowfullscreen', 'true');
-      iframe.setAttribute('referrerpolicy', 'no-referrer');
-      iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-presentation');
+      iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+      // allow-same-origin is required for the player to reach its own storage; it is
+      // safe because the frame is never same-origin with this page.
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-presentation');
       btn.replaceWith(iframe);
     }
 
@@ -2120,10 +2122,13 @@ const safeStorage = {
     iframe.setAttribute('frameborder', 'no');
     iframe.setAttribute('framespacing', '0');
     iframe.setAttribute('allowfullscreen', 'true');
-    iframe.setAttribute('referrerpolicy', 'no-referrer');
-    // Note: no allow-same-origin — combining it with allow-scripts on a remote
-    // document would let the frame escape its own sandbox.
-    iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-presentation');
+    iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+    // allow-same-origin is required: without it the frame gets an opaque origin, the
+    // player's storage access throws, and it dies as an empty black box. It is safe
+    // here because escaping a sandbox via allow-scripts+allow-same-origin requires the
+    // frame to be SAME-origin with its parent; player.bilibili.com never is, so the
+    // frame merely regains its own origin and still cannot touch this document.
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-presentation');
     btn.replaceWith(iframe);
   };
 

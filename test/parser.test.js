@@ -191,6 +191,29 @@ test('cjk-in-math warning is raised exactly when the autofix can fix it', () => 
   for (const md of ['$a+b$', '$\\text{设}x=1$', '花费$5和$10 元']) assert.ok(!warned(md), md);
 });
 
+// ------------------------------------------------------------ bilibili embed
+
+test('bilibili iframe sandbox keeps allow-same-origin', () => {
+  // Without allow-same-origin the player gets an opaque origin, its storage access
+  // throws, and it renders as an empty black box. It cannot be used to escape the
+  // sandbox because the frame is never same-origin with the editor page.
+  const html = render('![v](bilibili:BV1xx411c7mD)');
+  const facade = html.match(/data-src="([^"]+)"/);
+  assert.ok(facade, 'facade button should carry the player URL');
+  assert.match(facade[1], /player\.bilibili\.com/);
+  assert.match(facade[1], /isOutside=true/);
+  assert.match(facade[1], /bvid=BV1xx411c7mD/);
+  assert.match(facade[1], /(^|&amp;|&)p=1/);
+});
+
+test('bilibili accepts av ids and explicit pages', () => {
+  const av = render('![v](bilibili:av170001)').match(/data-src="([^"]+)"/)[1];
+  assert.match(av, /aid=170001/);
+  const paged = render('![v](bilibili:BV1xx411c7mD?p=3)').match(/data-src="([^"]+)"/)[1];
+  assert.match(paged, /page=3/);
+  assert.ok(!/(?:^|&amp;|&)p=1(?:&|$)/.test(paged), 'explicit page must not be overridden');
+});
+
 test('renders every corpus case without throwing', () => {
   for (const [name, md] of cases) {
     assert.doesNotThrow(() => render(md), `case ${name} threw`);

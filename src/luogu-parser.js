@@ -128,13 +128,21 @@
       bvid = raw;
     }
 
-    let queryParams = [];
+    // isOutside=true matches the embed code Bilibili itself hands out for off-site
+    // players; without it some videos refuse to initialise.
+    let queryParams = ['isOutside=true'];
     if (bvid) queryParams.push(`bvid=${encodeURIComponent(bvid)}`);
     else if (aid) queryParams.push(`aid=${encodeURIComponent(aid)}`);
 
     if (query) {
-      const qParams = new URLSearchParams(query);
-      for (const [k, v] of qParams.entries()) {
+      // Parsed by hand rather than with URLSearchParams: this file is also loaded in
+      // plain sandboxes where that global is absent, and a ReferenceError there would
+      // take down the whole render.
+      for (const pair of String(query).split('&')) {
+        if (!pair) continue;
+        const eq = pair.indexOf('=');
+        const k = eq === -1 ? pair : pair.slice(0, eq);
+        const v = eq === -1 ? '' : decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
         if (k === 'page' || k === 'p') {
           queryParams.push(`page=${encodeURIComponent(v)}`);
         } else if (k === 't') {
@@ -142,6 +150,8 @@
         }
       }
     }
+    // Default to the first part when the author did not pick one.
+    if (!queryParams.some((q) => q.startsWith('page='))) queryParams.push('p=1');
     queryParams.push('high_quality=1');
     queryParams.push('danmaku=0');
     queryParams.push('autoplay=0');
