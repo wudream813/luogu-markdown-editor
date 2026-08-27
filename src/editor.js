@@ -155,11 +155,14 @@ const safeStorage = {
 
       // Synchronized scrolling
       this.textarea.addEventListener('scroll', () => {
-        this.syncScroll('editor');
+        // The gutter must follow even our own writes, so update it before bailing out.
         this.updateGutterScroll();
+        if (this.isEchoScroll(this.textarea)) return;
+        this.syncScroll('editor');
       });
 
       this.previewEl.addEventListener('scroll', () => {
+        if (this.isEchoScroll(this.previewEl)) return;
         this.syncScroll('preview');
       });
 
@@ -352,11 +355,44 @@ const safeStorage = {
       });
     }
 
+    // Record that WE are about to move `el`, so the scroll event this write provokes
+    // can be told apart from one the user caused.
+    //
+    // This replaces an `isSyncScrolling` flag that was set and cleared around the
+    // write on the assumption that the echo event fires synchronously. It does not:
+    // scroll events are queued and delivered on a later task, by which point the flag
+    // had already been cleared. The echo was therefore processed as genuine user
+    // input and drove the *other* pane back — the intermittent bounce. It only showed
+    // up sometimes because a mapping that round-trips exactly is a no-op; the bounce
+    // needed accumulated rounding (long documents, tall blocks) to become visible.
+    markProgrammaticScroll(el, top) {
+      if (!this._echo) this._echo = new WeakMap();
+      this._echo.set(el, top);
+    }
+
+    // True if this scroll event is our own write echoing back.
+    isEchoScroll(el) {
+      if (!this._echo || !this._echo.has(el)) return false;
+      const expected = this._echo.get(el);
+      // The browser clamps and rounds scrollTop, so compare with a tolerance rather
+      // than for equality.
+      if (Math.abs(el.scrollTop - expected) <= 1.5) {
+        this._echo.delete(el);
+        return true;
+      }
+      // Position moved on beyond our write: the user is genuinely scrolling again.
+      this._echo.delete(el);
+      return false;
+    }
+
+    setScrollTop(el, top) {
+      if (Math.abs(el.scrollTop - top) <= 0.5) return;
+      this.markProgrammaticScroll(el, top);
+      el.scrollTop = top;
+    }
+
     applySyncScroll(source) {
-      if (!source || this.isSyncScrolling) return;
-      // Guard only the programmatic write below, then release synchronously: the echo
-      // scroll event is dispatched before the next frame, so nothing genuine is lost.
-      this.isSyncScrolling = true;
+      if (!source) return;
       try {
         const anchors = this.buildScrollAnchors();
         const tops = this.measureLineTops();
@@ -384,9 +420,7 @@ const safeStorage = {
             const from = lastTop === null ? pmax : Math.max(0, Math.min(pmax, lastTop));
             const t = padSpan > 0 ? (y - natural) / padSpan : 1;
             const want = from + (pmax - from) * t;
-            if (Math.abs(this.previewEl.scrollTop - want) > 0.5) {
-              this.previewEl.scrollTop = want;
-            }
+            this.setScrollTop(this.previewEl, want);
             return;
           }
           const line = this.visualOffsetToLine(tops, y);
@@ -396,12 +430,27 @@ const safeStorage = {
           if (target !== null) {
             const max = this.previewEl.scrollHeight - this.previewEl.clientHeight;
             const want = Math.max(0, Math.min(max, target));
-            if (Math.abs(this.previewEl.scrollTop - want) > 0.5) {
-              this.previewEl.scrollTop = want;
-            }
+            this.setScrollTop(this.previewEl, want);
           }
         } else if (source === 'preview') {
           const y = this.previewEl.scrollTop;
+          // Mirror of the editor branch: past the last anchor the preview is scrolling
+          // through its own tail padding, where no anchor maps any more. Interpolate
+          // onto the editor's tail so both panes finish together in this direction too.
+          const lastAnchorTop = anchors[anchors.length - 1].top;
+          if (y > lastAnchorTop) {
+            const pmax = this.previewEl.scrollHeight - this.previewEl.clientHeight;
+            const padSpan = pmax - lastAnchorTop;
+            const tmax = this.textarea.scrollHeight - this.textarea.clientHeight;
+            const lastVis = this.docToVisibleLine(anchors[anchors.length - 1].line);
+            const from = lastVis === -1
+              ? tmax
+              : Math.max(0, Math.min(tmax, tops[lastVis] || 0));
+            const t = padSpan > 0 ? (y - lastAnchorTop) / padSpan : 1;
+            this.setScrollTop(this.textarea, from + (tmax - from) * t);
+            this.updateGutterScroll();
+            return;
+          }
           const docLine = this.lineForPreviewTop(anchors, y);
           if (docLine !== null) {
             const vis = this.docToVisibleLine(Math.floor(docLine));
@@ -412,15 +461,13 @@ const safeStorage = {
               const target = a + (b - a) * frac;
               const max = this.textarea.scrollHeight - this.textarea.clientHeight;
               const want = Math.max(0, Math.min(max, target));
-              if (Math.abs(this.textarea.scrollTop - want) > 0.5) {
-                this.textarea.scrollTop = want;
-              }
+              this.setScrollTop(this.textarea, want);
               this.updateGutterScroll();
             }
           }
         }
       } finally {
-        this.isSyncScrolling = false;
+        // nothing to release: echo detection is positional, not time-windowed.
       }
     }
 
@@ -430,13 +477,13 @@ const safeStorage = {
         const max = this.textarea.scrollHeight - this.textarea.clientHeight;
         if (max > 0) {
           const r = this.textarea.scrollTop / max;
-          this.previewEl.scrollTop = r * (this.previewEl.scrollHeight - this.previewEl.clientHeight);
+          this.setScrollTop(this.previewEl, r * (this.previewEl.scrollHeight - this.previewEl.clientHeight));
         }
       } else {
         const max = this.previewEl.scrollHeight - this.previewEl.clientHeight;
         if (max > 0) {
           const r = this.previewEl.scrollTop / max;
-          this.textarea.scrollTop = r * (this.textarea.scrollHeight - this.textarea.clientHeight);
+          this.setScrollTop(this.textarea, r * (this.textarea.scrollHeight - this.textarea.clientHeight));
           this.updateGutterScroll();
         }
       }
@@ -834,26 +881,52 @@ const safeStorage = {
       if (this._basePadBottom === undefined) {
         this._basePadBottom = parseFloat(window.getComputedStyle(ta).paddingBottom) || 0;
       }
+      if (this._basePreviewPadBottom === undefined) {
+        this._basePreviewPadBottom = parseFloat(window.getComputedStyle(pv).paddingBottom) || 0;
+      }
+
+      // Measure against the UNPADDED heights of both panes, otherwise last frame's
+      // padding feeds into this frame's calculation and the two ratchet each other
+      // upwards on every render.
+      const prevTaPad = this._tailPad === undefined ? this._basePadBottom : this._tailPad;
+      const prevPvPad = this._previewTailPad === undefined
+        ? this._basePreviewPadBottom : this._previewTailPad;
+
+      const tops = this.measureLineTops();
+      const padTop = parseFloat(window.getComputedStyle(ta).paddingTop) || 0;
+      const lastLineTop = tops.length >= 2 ? tops[tops.length - 2] : 0;
+
       const anchors = this.buildScrollAnchors();
       const lastAnchorTop = anchors.length ? anchors[anchors.length - 1].top : 0;
-      // How much preview is left below the point the last source line maps to.
-      const remaining = Math.max(0, pv.scrollHeight - pv.clientHeight - lastAnchorTop);
 
-      // Enough padding that the LAST line can come to rest at the top of the viewport.
-      // Without this the editor bottoms out while its final line is still halfway down
-      // the screen, maxNaturalScroll sits beyond the reachable scroll range, and the
-      // tail-interpolation branch below can never run — which left the preview stranded
-      // ~59px short of its own bottom.
-      const tops = this.measureLineTops();
-      const contentH = tops.length ? tops[tops.length - 1] : 0;
-      const lastLineTop = tops.length >= 2 ? tops[tops.length - 2] : 0;
-      const padTop = parseFloat(window.getComputedStyle(ta).paddingTop) || 0;
-      const reachLast = Math.max(0, lastLineTop + padTop + ta.clientHeight - contentH - padTop);
+      // Natural (padding-free) scrollable extent of each pane.
+      const taNatural = Math.max(0, (ta.scrollHeight - prevTaPad + this._basePadBottom) - ta.clientHeight);
+      const pvNatural = Math.max(0, (pv.scrollHeight - prevPvPad + this._basePreviewPadBottom) - pv.clientHeight);
 
-      const want = Math.round(this._basePadBottom + Math.max(reachLast, remaining));
-      if (this._tailPad !== want) {
-        this._tailPad = want;
-        ta.style.paddingBottom = `${want}px`;
+      // Each pane must be able to scroll until its own last mapped position reaches
+      // the TOP of its viewport — that is the point where sync mapping runs out and
+      // tail interpolation takes over. Whichever pane cannot reach that point on its
+      // own content gets padding to make up the difference.
+      //
+      // Doing this for BOTH panes is what keeps them from bottoming out at different
+      // times: previously only the editor was extended, so a document whose source was
+      // taller than its render (e.g. a long link reference or a big table written out
+      // in full) hit the mirror-image bug — preview at its bottom, editor still going.
+      const taNeed = Math.max(0, lastLineTop + padTop - taNatural);
+      const pvNeed = Math.max(0, lastAnchorTop - pvNatural);
+
+      const wantTa = Math.round(this._basePadBottom + taNeed);
+      const wantPv = Math.round(this._basePreviewPadBottom + pvNeed);
+
+      if (this._tailPad !== wantTa) {
+        this._tailPad = wantTa;
+        ta.style.paddingBottom = `${wantTa}px`;
+      }
+      if (this._previewTailPad !== wantPv) {
+        this._previewTailPad = wantPv;
+        pv.style.paddingBottom = `${wantPv}px`;
+        // Anchor offsets are measured against the preview box, which just changed.
+        this._anchorsKey = null;
       }
     }
 
