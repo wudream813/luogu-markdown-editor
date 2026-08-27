@@ -166,6 +166,12 @@
     };
   }
 
+  // Every container name the renderer understands. Anything else is a typo and is
+  // rendered literally instead of being coerced into an info callout.
+  const CONTAINER_TYPES = new Set([
+    'info', 'success', 'warning', 'error', 'align', 'epigraph',
+  ]);
+
   class LuoguParser {
     constructor(options = {}) {
       this.options = Object.assign({
@@ -398,6 +404,15 @@
 
         // 3. Luogu Container Blocks (Colons: :::info, :::epigraph, :::align, etc.)
         const colonMatch = line.match(/^(:{3,})([a-zA-Z0-9_\-]+)(?:\[(.*?)\])?(?:\{(.*?)\})?\s*$/);
+        // An unrecognised name must NOT open a container. `:::s` (a typo for the
+        // closing `:::`) used to match here and silently swallow everything after it
+        // into a bogus "info" box, and `:::xxx` rendered as a 提示 box the user never
+        // asked for. Unknown names now fall through and are shown as literal text.
+        if (colonMatch && !CONTAINER_TYPES.has(colonMatch[2].toLowerCase())) {
+          out.push(`<p class="luogu-p luogu-unknown-container">${escapeHtml(line)}</p>`);
+          i++;
+          continue;
+        }
         if (colonMatch) {
           const startLine = srcLineOf[i];
           const colons = colonMatch[1];
@@ -410,21 +425,36 @@
           const innerLines = [];
           i++;
 
+          let closed = false;
           while (i < n) {
             const curLine = lines[i];
             const closeMatch = curLine.match(/^(:{3,})\s*$/);
             if (closeMatch && closeMatch[1].length === colonLevel) {
               i++;
+              closed = true;
               break;
             }
             innerLines.push(curLine);
             i++;
           }
+          // Reaching EOF without a matching close is almost always a typo. Render the
+          // block anyway (so the content is not lost) but flag it, rather than silently
+          // absorbing the whole rest of the document with no visible explanation.
+          if (!closed) {
+            out.push(
+              `<p class="luogu-p luogu-unclosed-warning">⚠ 容器 <code>${escapeHtml(colons + type)}</code>`
+              + ` 缺少结尾的 <code>${escapeHtml(colons)}</code></p>`
+            );
+          }
 
           // `startLine` lets the editor pair a rendered callout with the exact
           // source line that opened it, which is what makes source-side folding and
           // preview folding stay in sync.
-          out.push(this.renderContainerBlock(type, title, param, innerLines, startLine));
+          // `i` now points just past the closing ':::', so i-1 is the last line the
+          // container occupies. The editor needs this span to interpolate scroll
+          // position across a COLLAPSED callout, whose body has no boxes of its own.
+          const endLine = srcLineOf[Math.min(i - 1, n - 1)];
+          out.push(this.renderContainerBlock(type, title, param, innerLines, startLine, endLine));
           continue;
         }
 
@@ -582,7 +612,7 @@
     }
 
     // Render Luogu Containers (Callouts, Align, Epigraph)
-    renderContainerBlock(type, title, param, innerLines, startLine = -1) {
+    renderContainerBlock(type, title, param, innerLines, startLine = -1, endLine = -1) {
       // Align blocks
       if (type === 'align') {
         const alignMode = (param || 'center').toLowerCase();
@@ -628,7 +658,7 @@
       const titleContent = title ? this.renderInline(title) : defaultTitles[calloutType];
 
       return `
-        <details class="luogu-callout luogu-callout-${calloutType}" ${isOpen ? 'open' : ''}${startLine >= 0 ? ` data-src-line="${startLine}"` : ''}>
+        <details class="luogu-callout luogu-callout-${calloutType}" ${isOpen ? 'open' : ''}${startLine >= 0 ? ` data-src-line="${startLine}"` : ''}${endLine >= 0 ? ` data-src-end-line="${endLine}"` : ''}>
           <summary class="luogu-callout-summary">
             <span class="luogu-callout-icon">${icons[calloutType]}</span>
             <span class="luogu-callout-title">${titleContent}</span>

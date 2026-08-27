@@ -300,3 +300,40 @@ test('blockquote inner content keeps its absolute line', () => {
     `blockquote body restarted numbering: ${JSON.stringify(lines)}`);
   assert.ok(Math.max(...lines) >= 4, `expected an anchor at/after line 4: ${JSON.stringify(lines)}`);
 });
+
+test('unknown container names are not treated as containers', () => {
+  // ":::s" is a typo for the closing ":::". It used to match the OPENING pattern
+  // (type = "s"), silently become an info callout, and swallow the rest of the file.
+  const html = render(':::xxx\n\n内容一\n\n:::s\n\n后面的正文。');
+  assert.ok(!/luogu-callout/.test(html), 'unknown names must not render a callout');
+  assert.match(html, /luogu-unknown-container/);
+  assert.match(html, /:::xxx/);
+  assert.match(html, /:::s/);
+  // Crucially, text after the typo must stay OUTSIDE any box.
+  assert.match(html, /后面的正文。/);
+});
+
+test('valid container types still render', () => {
+  for (const t of ['info', 'success', 'warning', 'error']) {
+    const html = render(`:::${t}\n内容\n:::`);
+    assert.match(html, new RegExp(`luogu-callout-${t}`), `${t} should render`);
+  }
+  assert.match(render(':::align[center]\n居中\n:::'), /luogu-align-center/);
+  assert.match(render(':::epigraph[作者]\n题记\n:::'), /luogu-epigraph/);
+});
+
+test('unclosed container is flagged rather than silently swallowing the document', () => {
+  const html = render(':::info\n忘了结尾的内容');
+  assert.match(html, /luogu-unclosed-warning/);
+  assert.match(html, /忘了结尾的内容/, 'content must still be rendered');
+});
+
+test('collapsed callout exposes the line span it covers', () => {
+  // The editor needs the end line to keep scroll sync flat across a collapsed body
+  // instead of smearing those hidden lines onto the next visible block.
+  const md = ['# T', '', ':::info[收起]', 'a', 'b', 'c', ':::', '', '尾巴'].join('\n');
+  const m = render(md).match(/<details[^>]*data-src-line="(\d+)"[^>]*data-src-end-line="(\d+)"/);
+  assert.ok(m, 'details must carry both start and end line');
+  assert.equal(Number(m[1]), 2);
+  assert.equal(Number(m[2]), 6);
+});

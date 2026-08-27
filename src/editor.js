@@ -311,12 +311,38 @@ const safeStorage = {
       nodes.forEach((el) => {
         const line = parseInt(el.getAttribute('data-src-line'), 10);
         if (!Number.isFinite(line)) return;
-        // Skip anything inside a collapsed <details>: it has no meaningful position.
+
+        // Content inside a COLLAPSED <details> has no box of its own. It used to be
+        // skipped outright, which left a hole in the anchor list: every hidden line
+        // got linearly smeared across the gap between the anchors on either side, so
+        // scrolling a 13-line collapsed body moved the preview by ~6px and then made
+        // it lurch. Map such lines onto their nearest visible ancestor instead — the
+        // callout box that actually represents them — so the preview parks on that box
+        // for as long as the editor is inside it.
+        // Content inside a COLLAPSED <details> has no box of its own, so it cannot
+        // contribute a position. Drop it here; the span handling below covers those
+        // lines using the callout box itself.
         if (el.offsetParent === null && el !== this.previewEl) return;
         const top = el.getBoundingClientRect().top - baseTop;
         const prev = anchors[anchors.length - 1];
         if (prev && prev.line === line) return;
         anchors.push({ line, top });
+      });
+
+      // A collapsed callout stands for every source line between its ':::' delimiters,
+      // but contributes a single anchor at its opening line. Without a second anchor at
+      // its END line, all those lines were smeared across the gap to the next visible
+      // block: scrolling a 13-line collapsed body nudged the preview ~6px and then made
+      // it lurch. Adding an end anchor at the same box makes the mapping deliberately
+      // flat over the hidden range — the preview parks on the callout while the editor
+      // travels through it, then resumes cleanly.
+      this.previewEl.querySelectorAll('details.luogu-callout[data-src-end-line]').forEach((d) => {
+        if (d.hasAttribute('open')) return;              // expanded: real boxes exist
+        if (d.offsetParent === null) return;             // itself hidden (nested)
+        const endLine = parseInt(d.getAttribute('data-src-end-line'), 10);
+        if (!Number.isFinite(endLine)) return;
+        const r = d.getBoundingClientRect();
+        anchors.push({ line: endLine, top: r.bottom - baseTop });
       });
       anchors.sort((a, b) => a.line - b.line || a.top - b.top);
 
