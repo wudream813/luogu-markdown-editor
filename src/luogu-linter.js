@@ -382,20 +382,10 @@
             });
           }
 
-          // Missing sentence end period on plain text paragraph (including sentence ending with Chinese or formula $a$ or English)
-          const endPunct = '[。！？：；……“”‘’（）【】《》、]';
-          if (!new RegExp(`${endPunct}$`).test(trimmed)) {
-            if (/[\u4e00-\u9fa5a-zA-Z0-9]$/.test(trimmed) || /\$[^\$\n]+\$$/.test(trimmed)) {
-              issues.push({
-                line: lineNum,
-                type: 'info',
-                title: '句末缺少句号等标点符号',
-                message: '《洛谷基本规范第 1 条》明确要求：特别地，句末要有【句号】。点击【洛谷排版修复】可自动补全句末句号。',
-                rule: 'missing-end-period',
-                fixable: true
-              });
-            }
-          }
+          // Missing sentence-end period. Deliberately NOT evaluated here: a Markdown
+          // paragraph may span several lines, and judging each line on its own flagged
+          // every line but the last one. Collected after the loop instead, where whole
+          // paragraphs are visible. See the paragraph pass below.
         }
 
         // 8. Sanitize line for typography checks
@@ -473,6 +463,86 @@
             fixable: true
           });
         }
+      }
+
+      // ---- Sentence-end period, evaluated per PARAGRAPH ----
+      //
+      // A Markdown paragraph is a run of non-blank lines, and only its LAST line ends
+      // a sentence. The previous per-line check flagged every other line of a wrapped
+      // paragraph, plus setext headings, container bodies, $$...$$ interiors and
+      // indented continuations. Rebuild the block structure here so only genuine
+      // paragraph endings are judged.
+      {
+        const END_PUNCT = /[。！？：；…”’）】》、,.!?:;)\]}"'`]$/;
+        let inFence = false;
+        let inMathBlock = false;
+        const containerStack = [];
+        let para = null;                     // { startIdx, lines: [] }
+
+        const flush = () => {
+          if (!para) return;
+          const lastIdx = para.startIdx + para.lines.length - 1;
+          const lastLine = para.lines[para.lines.length - 1].trim();
+          para = null;
+
+          if (!lastLine) return;
+          // Setext heading underline (=== / ---) means the run was a heading.
+          if (/^(=+|-+)$/.test(lastLine)) return;
+          // Structural or non-prose endings.
+          if (/^[|>#]/.test(lastLine)) return;
+          if (/^:{3,}/.test(lastLine)) return;
+          if (/^(\*{3,}|-{3,}|_{3,})$/.test(lastLine)) return;
+          // Pure media/link/html lines carry no sentence.
+          if (/^!\[[^\]]*\]\([^)]*\)$/.test(lastLine)) return;
+          if (/^\[[^\]]*\]\([^)]*\)$/.test(lastLine)) return;
+          if (/^<.*>$/.test(lastLine)) return;
+          if (/^\$\$/.test(lastLine) || /\$\$$/.test(lastLine)) return;
+          if (END_PUNCT.test(lastLine)) return;
+
+          // Only prose-looking endings qualify.
+          const endsProse = /[\u4e00-\u9fa5a-zA-Z0-9]$/.test(lastLine)
+            || /\$[^$\n]+\$$/.test(lastLine);
+          if (!endsProse) return;
+
+          issues.push({
+            line: lastIdx + 1,
+            type: 'info',
+            title: '句末缺少句号等标点符号',
+            message: '《洛谷基本规范第 1 条》明确要求：特别地，句末要有【句号】。点击【洛谷排版修复】可自动补全句末句号。',
+            rule: 'missing-end-period',
+            fixable: true
+          });
+        };
+
+        for (let i = 0; i < lines.length; i++) {
+          const raw = lines[i];
+          const t = raw.trim();
+
+          if (/^[`~]{3,}/.test(t)) { flush(); inFence = !inFence; continue; }
+          if (inFence) continue;
+
+          // $$ on its own line toggles a display-math block.
+          if (/^\$\$/.test(t) && !/\$\$.*\$\$/.test(t)) {
+            flush(); inMathBlock = !inMathBlock; continue;
+          }
+          if (inMathBlock) continue;
+
+          const openC = t.match(/^(:{3,})[a-zA-Z0-9_-]+/);
+          const closeC = t.match(/^(:{3,})\s*$/);
+          if (openC) { flush(); containerStack.push(openC[1].length); continue; }
+          if (closeC) { flush(); containerStack.pop(); continue; }
+
+          if (!t) { flush(); continue; }
+          // Structural lines never join a prose paragraph.
+          if (/^[|>#]/.test(t) || /^(\*{3,}|-{3,}|_{3,})$/.test(t)
+              || /^\s*([*+-]|\d+[.)])\s+/.test(raw) || /^::cute-table/i.test(t)) {
+            flush(); continue;
+          }
+
+          if (!para) para = { startIdx: i, lines: [] };
+          para.lines.push(raw);
+        }
+        flush();
       }
 
       // Calculate health score
@@ -619,8 +689,24 @@
         line = line.replace(new RegExp(`(${cjkPunct})(\\*{1,3}|_{1,3}|~~)\\s+([\\u4e00-\\u9fa5])`, 'g'), '$1$2$3');
 
         // 14. Append sentence-end fullwidth period for plain text Chinese sentences or formulas or English words missing end punctuation (strictly excluding headings, lists, tables, quotes)
+        //
+        // Only the LAST line of a paragraph ends a sentence. Without this lookahead the
+        // fixer turned a paragraph wrapped over three lines into "第一行。第二行。第三行。",
+        // inserting periods in the middle of a sentence — and disagreeing with the
+        // linter, which (correctly) only flags the final line.
+        const nextRaw = i + 1 < lines.length ? lines[i + 1] : '';
+        const nextTrim = nextRaw.trim();
+        const paragraphContinues = !!nextTrim
+          && !/^[`~]{3,}/.test(nextTrim)
+          && !/^[|>#]/.test(nextTrim)
+          && !/^:{3,}/.test(nextTrim)
+          && !/^(\*{3,}|-{3,}|_{3,})$/.test(nextTrim)
+          && !/^(=+|-+)$/.test(nextTrim)
+          && !/^\s*([*+-]|\d+[.)])\s+/.test(nextRaw)
+          && !/^\$\$/.test(nextTrim);
+
         const trimmedLine = line.trim();
-        if (trimmedLine && !/^[#\*\+\-\|:>`\d\.\s]/.test(trimmedLine)) {
+        if (!paragraphContinues && trimmedLine && !/^[#\*\+\-\|:>`\d\.\s]/.test(trimmedLine)) {
           // A standalone block-level element — a display equation ($$...$$), an image/video,
           // or a link on its own line — is not a prose sentence, so never append a sentence
           // period here. These are tokenized into LUOGUTOKEN...END during formatting.

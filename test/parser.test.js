@@ -337,3 +337,52 @@ test('collapsed callout exposes the line span it covers', () => {
   assert.equal(Number(m[1]), 2);
   assert.equal(Number(m[2]), 6);
 });
+
+// --------------------------------------------- sentence-end period (paragraphs)
+
+test('missing-end-period judges paragraphs, not individual lines', () => {
+  const linesOf = (md) => linter.lint(md).issues
+    .filter((i) => i.rule === 'missing-end-period').map((i) => i.line);
+
+  // A paragraph wrapped over several lines ends ONCE. The old per-line check flagged
+  // every line but the last.
+  assert.deepEqual(linesOf('第一行\n第二行\n第三行'), [3]);
+  assert.deepEqual(linesOf('一句话跨越了多行\n它的后半句在这里。'), []);
+  assert.deepEqual(linesOf('一段完整的话。'), []);
+  assert.deepEqual(linesOf('一段完整的话'), [1]);
+});
+
+test('missing-end-period ignores non-prose blocks', () => {
+  const hits = (md) => linter.lint(md).issues
+    .filter((i) => i.rule === 'missing-end-period').length;
+
+  assert.equal(hits('# 标题'), 0, 'heading');
+  assert.equal(hits('标题下面\n==='), 0, 'setext heading');
+  assert.equal(hits('- 列表项'), 0, 'list');
+  assert.equal(hits('> 引用'), 0, 'blockquote');
+  assert.equal(hits('| a | b |'), 0, 'table');
+  assert.equal(hits('```cpp\nint main(){}\n```'), 0, 'code fence');
+  assert.equal(hits('$$\n多行公式\n$$'), 0, 'display math');
+  assert.equal(hits('![图](a.png)'), 0, 'image');
+  assert.equal(hits('[链接](https://a.com)'), 0, 'link');
+  assert.equal(hits(':::info\n框内文字。\n:::'), 0, 'container delimiters');
+  // The container BODY is still prose and must be checked.
+  assert.equal(hits(':::info\n框内文字\n:::'), 1, 'container body');
+});
+
+test('period autofix agrees with the linter and is idempotent', () => {
+  for (const md of [
+    '一段完整的话',
+    '第一行\n第二行\n第三行',
+    ':::info\n框内文字\n:::',
+    '结尾是英文单词 test',
+    '一句话跨越了多行\n它的后半句在这里',
+  ]) {
+    const fixed = linter.formatSpacing(md);
+    const left = linter.lint(fixed).issues.filter((i) => i.rule === 'missing-end-period');
+    assert.equal(left.length, 0, `fix should clear the warning for ${JSON.stringify(md)}`);
+    assert.equal(linter.formatSpacing(fixed), fixed, 'formatSpacing must be idempotent');
+  }
+  // A period belongs only at the END of a wrapped paragraph.
+  assert.equal(linter.formatSpacing('第一行\n第二行\n第三行'), '第一行\n第二行\n第三行。');
+});

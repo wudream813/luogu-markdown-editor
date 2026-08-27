@@ -1655,10 +1655,10 @@ code[class*="language-"] {
      current theme. Without this, dark-mode variables leak into content elements
      (inline code, tables, callouts, blockquotes, epigraph) and print as dark
      blocks on a white page. Sources are the LIGHT palette values. */
-  :root,
-  [data-theme="light"],
-  [data-theme="dark"],
-  [data-theme="academic"] {
+  .print-light:root,
+  .print-light[data-theme="light"],
+  .print-light[data-theme="dark"],
+  .print-light[data-theme="academic"] {
     --bg-primary: #ffffff;
     --bg-secondary: #f6f8fa;
     --bg-tertiary: #eef1f4;
@@ -1712,10 +1712,19 @@ code[class*="language-"] {
     width: 100% !important;
     height: auto !important;
     overflow: visible !important;
-    background: #ffffff !important;
-    color: #24292e !important;
     font-size: 11pt !important;
     line-height: 1.6 !important;
+  }
+
+  /* Page colours follow the chosen print mode instead of being hard-forced to white,
+     which previously left dark-mode PDFs with near-black headings on a dark page. */
+  .print-light, .print-light body {
+    background: #ffffff !important;
+    color: #24292e !important;
+  }
+  .print-dark, .print-dark body {
+    background: #1e1e1e !important;
+    color: #e6e6e6 !important;
   }
   
   #app, .main-workspace, .preview-pane, .preview-content {
@@ -1727,7 +1736,15 @@ code[class*="language-"] {
     margin: 0 !important;
     border: none !important;
     box-shadow: none !important;
+  }
+  .print-light #app, .print-light .main-workspace,
+  .print-light .preview-pane, .print-light .preview-content {
     background: #ffffff !important;
+  }
+  .print-dark #app, .print-dark .main-workspace,
+  .print-dark .preview-pane, .print-dark .preview-content {
+    background: #1e1e1e !important;
+    color: #e6e6e6 !important;
   }
   
   /* Hide interactive UI elements */
@@ -1755,7 +1772,14 @@ code[class*="language-"] {
     break-after: avoid !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+  .print-light h1, .print-light h2, .print-light h3,
+  .print-light h4, .print-light h5, .print-light h6 {
     color: #1a1a1a !important;
+  }
+  .print-dark h1, .print-dark h2, .print-dark h3,
+  .print-dark h4, .print-dark h5, .print-dark h6 {
+    color: #f0f0f0 !important;
   }
   
   p, blockquote, .luogu-p {
@@ -1773,8 +1797,93 @@ code[class*="language-"] {
     break-inside: avoid !important;
   }
   
+  /* Prism ships a DARK theme (Tomorrow Night): #999 comments, #ccc punctuation,
+     #7ec699 strings — all chosen to sit on a near-black background. Printing forces
+     the code block to a light background, but nothing was re-colouring the tokens,
+     so every one of them landed under 3:1 contrast on white (punctuation was 1.51).
+     That is the "code colours are wrong in the PDF" report: pale text on pale paper.
+
+     Re-map the whole palette to light-background equivalents, keeping the hue so the
+     printed code still reads like the on-screen code. Values are the GitHub light
+     syntax palette, all >= 4.5:1 against #f6f8fa. */
+  .print-light .luogu-code-block-wrapper .token.comment,
+  .print-light .luogu-code-block-wrapper .token.block-comment,
+  .print-light .luogu-code-block-wrapper .token.prolog,
+  .print-light .luogu-code-block-wrapper .token.doctype,
+  .print-light .luogu-code-block-wrapper .token.cdata {
+    color: #6a737d !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.punctuation,
+  .print-light .luogu-code-block-wrapper .token.double-colon {
+    color: #24292e !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.tag,
+  .print-light .luogu-code-block-wrapper .token.attr-name,
+  .print-light .luogu-code-block-wrapper .token.namespace,
+  .print-light .luogu-code-block-wrapper .token.deleted {
+    color: #b31d28 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.function-name,
+  .print-light .luogu-code-block-wrapper .token.function {
+    color: #6f42c1 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.boolean,
+  .print-light .luogu-code-block-wrapper .token.number,
+  .print-light .luogu-code-block-wrapper .token.constant,
+  .print-light .luogu-code-block-wrapper .token.symbol {
+    color: #005cc5 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.class-name,
+  .print-light .luogu-code-block-wrapper .token.property,
+  .print-light .luogu-code-block-wrapper .token.macro,
+  .print-light .luogu-code-block-wrapper .token.directive-hash {
+    color: #a04100 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.atrule,
+  .print-light .luogu-code-block-wrapper .token.builtin,
+  .print-light .luogu-code-block-wrapper .token.keyword,
+  .print-light .luogu-code-block-wrapper .token.directive,
+  .print-light .luogu-code-block-wrapper .token.selector,
+  .print-light .luogu-code-block-wrapper .token.important {
+    /* #d73a49 is 4.30:1; nudged darker for AA. */
+    color: #b31d28 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.string,
+  .print-light .luogu-code-block-wrapper .token.attr-value,
+  .print-light .luogu-code-block-wrapper .token.char,
+  .print-light .luogu-code-block-wrapper .token.regex,
+  .print-light .luogu-code-block-wrapper .token.variable {
+    color: #032f62 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.operator,
+  .print-light .luogu-code-block-wrapper .token.entity,
+  .print-light .luogu-code-block-wrapper .token.url {
+    color: #b31d28 !important;
+  }
+  .print-light .luogu-code-block-wrapper .token.inserted {
+    color: #22863a !important;
+  }
+
+  /* Printing in dark mode. The default is print-light (see printDocument): a reader
+     usually wants ink-on-paper. But when the user explicitly keeps the dark theme we
+     honour it, and then the PAGE itself must be dark as well — otherwise dark code
+     blocks and callouts float on white paper, which looks broken and wastes toner.
+     Prism's own dark palette is already correct here, so tokens are left alone. */
+  .print-dark .luogu-code-block-wrapper {
+    color: #abb2bf !important;
+  }
+
+  .print-dark body,
+  .print-dark #app,
+  .print-dark .main-workspace,
+  .print-dark .preview-pane,
+  .print-dark .preview-content {
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+  }
+
   /* Code blocks in print: force 100% clean multi-line wrapping */
-  .luogu-code-block-wrapper {
+  .print-light .luogu-code-block-wrapper {
     background: #f6f8fa !important;
     color: #24292e !important;
     border: 1px solid #d1d5da !important;
@@ -1789,7 +1898,7 @@ code[class*="language-"] {
     box-sizing: border-box !important;
   }
   
-  .luogu-code-header {
+  .print-light .luogu-code-header {
     background: #eaecef !important;
     color: #444d56 !important;
     border-bottom: 1px solid #d1d5da !important;
@@ -1864,12 +1973,16 @@ code[class*="language-"] {
     width: 100% !important;
     max-width: calc(100% - 36px) !important;
     box-sizing: border-box !important;
-    color: #24292e !important;
     font-size: 9pt !important;
     line-height: 1.45 !important;
   }
+
+  /* Unhighlighted code text. Split by print mode: the flat #24292e used to apply in
+     both, so a dark-mode PDF printed near-black text onto a near-black code block. */
+  .print-light .code-line-text { color: #24292e !important; }
+  .print-dark .code-line-text { color: #abb2bf !important; }
   
-  .code-line-highlighted {
+  .print-light .code-line-highlighted {
     background: #fff8c5 !important;
     border-left: 3px solid #d4a72c !important;
     padding-left: 5px !important;

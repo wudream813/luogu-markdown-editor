@@ -112,6 +112,15 @@ const safeStorage = {
     setupPrintHooks() {
       let savedStates = [];
       window.addEventListener('beforeprint', () => {
+        // Ctrl+P bypasses printDocument(), so the light/dark decision has to be made
+        // here too, or a keyboard-initiated print would fall through with no
+        // print-light/print-dark class and lose every print rule.
+        const root = document.documentElement;
+        if (!root.classList.contains('print-light') && !root.classList.contains('print-dark')) {
+          const theme = root.getAttribute('data-theme') || 'light';
+          root.classList.add(theme === 'dark' ? 'print-dark' : 'print-light');
+        }
+
         savedStates = [];
         const callouts = document.querySelectorAll('details.luogu-callout');
         callouts.forEach(d => {
@@ -121,6 +130,7 @@ const safeStorage = {
       });
 
       window.addEventListener('afterprint', () => {
+        document.documentElement.classList.remove('print-light', 'print-dark');
         savedStates.forEach(item => {
           if (!item.wasOpen) {
             item.el.removeAttribute('open');
@@ -2325,7 +2335,18 @@ const safeStorage = {
     }
 
     // Print / PDF Export
-    printDocument() {
+    printDocument(mode) {
+      // Decide whether the PDF is light or dark. Default: follow the editor's current
+      // theme, which is what "the PDF should match the theme I exported from" asks
+      // for. Previously the print stylesheet hard-forced a light palette with no way
+      // to opt out, so the output was identical in both themes.
+      const theme = document.documentElement.getAttribute('data-theme') || 'light';
+      const wantDark = mode ? mode === 'dark' : theme === 'dark';
+      const root = document.documentElement;
+      root.classList.remove('print-light', 'print-dark');
+      root.classList.add(wantDark ? 'print-dark' : 'print-light');
+      this._printClassApplied = true;
+
       // Temporarily open all details so every browser engine prints them expanded
       const allDetails = document.querySelectorAll('details.luogu-callout');
       const states = [];
