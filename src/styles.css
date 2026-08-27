@@ -428,8 +428,8 @@ html, body {
 
 .line-numbers-gutter {
   position: relative;
-  width: 58px;
-  padding: 12px 6px 12px 18px;
+  width: 66px;
+  padding: 12px 24px 12px 8px;
   text-align: right;
   font-family: var(--font-mono);
   font-size: 13px;
@@ -446,7 +446,7 @@ html, body {
 
 .gutter-num-abs {
   position: absolute;
-  right: 6px;
+  right: 24px;
 }
 
 /* Each gutter row must occupy exactly one text line so the numbers stay aligned
@@ -465,34 +465,45 @@ html, body {
 
 .fold-markers {
   position: absolute;
-  top: 12px;   /* matches .line-numbers-gutter padding-top */
-  left: 2px;
-  width: 14px;
+  top: 0;
+  /* Right-hand lane, immediately left of the text: the arrow belongs next to the
+     line it folds, not stranded at the editor's outer edge. */
+  right: 1px;
+  width: 20px;
   height: 100%;
   pointer-events: none;
   will-change: transform;
+  z-index: 2;
 }
 
-/* Fold arrow for ::: blocks. Absolutely positioned at line * lineHeight, so it
-   never participates in the gutter's text layout and cannot perturb alignment. */
+/* Fold arrow for ::: blocks. Absolutely positioned at a measured offset, so it never
+   participates in the gutter's text layout and cannot perturb alignment. */
 .fold-toggle {
   position: absolute;
   left: 0;
-  width: 14px;
+  width: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   pointer-events: auto;
   cursor: pointer;
-  border-radius: 3px;
-  font-size: 10px;
-  color: var(--text-muted);
-  transition: color 0.15s, background 0.15s;
+  border-radius: 4px;
+  /* Was 10px in a 14px box, which was essentially invisible. */
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--luogu-blue);
+  background: rgba(52, 152, 219, 0.12);
+  background: color-mix(in srgb, var(--luogu-blue) 12%, transparent);
+  border: 1px solid rgba(52, 152, 219, 0.35);
+  border-color: color-mix(in srgb, var(--luogu-blue) 35%, transparent);
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 
 .fold-toggle:hover {
-  color: var(--luogu-blue);
-  background: rgba(52, 152, 219, 0.15);
+  color: #fff;
+  background: var(--luogu-blue);
+  border-color: var(--luogu-blue);
 }
 
 .fold-toggle:focus-visible {
@@ -503,7 +514,13 @@ html, body {
 /* Collapsed: arrow points right. */
 .fold-toggle.closed {
   transform: rotate(-90deg);
-  color: var(--luogu-blue);
+}
+
+/* A collapsed block is easy to scroll past, so mark it more strongly. */
+.fold-toggle.closed {
+  background: rgba(52, 152, 219, 0.28);
+  background: color-mix(in srgb, var(--luogu-blue) 28%, transparent);
+  border-color: var(--luogu-blue);
 }
 
 .fold-spacer {

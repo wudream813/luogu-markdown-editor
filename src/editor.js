@@ -396,9 +396,26 @@ const safeStorage = {
     }
 
     syncScroll(source) {
-      if (this.isSyncScrolling) return;
-      this.isSyncScrolling = true;
+      // The pane being driven also emits `scroll`, which would drive the first pane
+      // straight back. Rather than dropping events during a timed lock — which threw
+      // away the intermediate positions of a fast wheel/inertia scroll and made the
+      // other pane advance in visible ~280px jumps — remember the latest request and
+      // collapse them all into one update on the next animation frame.
+      this._pendingSyncSource = source;
+      if (this._syncRaf) return;
+      this._syncRaf = requestAnimationFrame(() => {
+        this._syncRaf = 0;
+        const src = this._pendingSyncSource;
+        this._pendingSyncSource = null;
+        this.applySyncScroll(src);
+      });
+    }
 
+    applySyncScroll(source) {
+      if (!source || this.isSyncScrolling) return;
+      // Guard only the programmatic write below, then release synchronously: the echo
+      // scroll event is dispatched before the next frame, so nothing genuine is lost.
+      this.isSyncScrolling = true;
       try {
         const anchors = this.buildScrollAnchors();
         const tops = this.measureLineTops();
@@ -419,7 +436,10 @@ const safeStorage = {
           const target = this.previewTopForLine(anchors, docLine, frac);
           if (target !== null) {
             const max = this.previewEl.scrollHeight - this.previewEl.clientHeight;
-            this.previewEl.scrollTop = Math.max(0, Math.min(max, target));
+            const want = Math.max(0, Math.min(max, target));
+            if (Math.abs(this.previewEl.scrollTop - want) > 0.5) {
+              this.previewEl.scrollTop = want;
+            }
           }
         } else if (source === 'preview') {
           const y = this.previewEl.scrollTop;
@@ -432,14 +452,16 @@ const safeStorage = {
               const b = tops[vis + 1] !== undefined ? tops[vis + 1] : a;
               const target = a + (b - a) * frac;
               const max = this.textarea.scrollHeight - this.textarea.clientHeight;
-              this.textarea.scrollTop = Math.max(0, Math.min(max, target));
+              const want = Math.max(0, Math.min(max, target));
+              if (Math.abs(this.textarea.scrollTop - want) > 0.5) {
+                this.textarea.scrollTop = want;
+              }
               this.updateGutterScroll();
             }
           }
         }
       } finally {
-        clearTimeout(this._syncReleaseTimer);
-        this._syncReleaseTimer = setTimeout(() => { this.isSyncScrolling = false; }, 50);
+        this.isSyncScrolling = false;
       }
     }
 
@@ -971,7 +993,11 @@ const safeStorage = {
       if (!ta) return [];
       const text = ta.value;
       const width = ta.clientWidth;
-      const cacheKey = `${text.length}\u0000${width}\u0000${text.length && text.charCodeAt(0)}`;
+      // Hash the actual text: keying on length alone collided whenever an edit kept
+      // the length unchanged, returning stale offsets and misplacing the gutter.
+      let h = 0;
+      for (let k = 0; k < text.length; k++) h = ((h << 5) - h + text.charCodeAt(k)) | 0;
+      const cacheKey = `${text.length}\u0000${width}\u0000${h}`;
       if (this._lineTopsKey === cacheKey && this._lineTops) return this._lineTops;
 
       let mirror = this._mirrorEl;
@@ -1066,9 +1092,13 @@ const safeStorage = {
       // numbers and the fold arrows are positioned at measured offsets rather than
       // at index * lineHeight.
       const tops = this.measureLineTops();
+      // The numbers are absolutely positioned, so they escape the gutter's own
+      // padding-top; the textarea's first line starts one padding-top down. Without
+      // this offset every number sits ~12px too high.
+      const padTop = parseFloat(window.getComputedStyle(this.textarea).paddingTop) || 0;
       const numParts = [];
       for (let i = 0; i < count; i++) {
-        numParts.push(`<span class="gutter-num-abs" style="top:${(tops[i] || 0).toFixed(2)}px">${i + 1}</span>`);
+        numParts.push(`<span class="gutter-num-abs" style="top:${((tops[i] || 0) + padTop).toFixed(2)}px">${i + 1}</span>`);
       }
       this.gutterEl.innerHTML = numParts.join('');
       this.gutterEl.style.height = `${tops[tops.length - 1] || 0}px`;
@@ -1079,7 +1109,7 @@ const safeStorage = {
         foldable.forEach((state, line) => {
           parts.push(
             `<span class="fold-toggle ${state}" data-line="${line}" role="button" tabindex="0" ` +
-            `style="top:${(tops[line] || 0).toFixed(2)}px;height:${lh.toFixed(2)}px" ` +
+            `style="top:${((tops[line] || 0) + padTop).toFixed(2)}px;height:${lh.toFixed(2)}px" ` +
             `aria-expanded="${state === 'open'}" ` +
             `aria-label="${state === 'open' ? '折叠' : '展开'}此区块">▾</span>`
           );
