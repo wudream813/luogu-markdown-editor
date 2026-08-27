@@ -228,17 +228,32 @@
 
       // Inline math: $ ... $
       // Must not match \$ (escaped) or empty $$, and should not span across empty lines.
-      // Reject candidates whose content reads like prose, so that paired "$" used for
-      // currency / placeholders in normal text (e.g. "花费$5和$10") are not eaten as math.
+      //
+      // The tricky part is telling a real formula from two unrelated currency signs in
+      // prose ("花费$5和$10元"). Rejecting anything that contains CJK was too blunt: it
+      // also killed perfectly valid formulas such as "$设x=1$" or "$a_{最大}$", which
+      // Luogu itself renders. Instead, only reject when the span looks like prose that
+      // merely happens to sit between two dollar signs.
       text = text.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, (match, prefix, formula) => {
         const f = formula.trim();
         if (!f) return match;
-        // If the "formula" contains bare CJK (not inside \text{}/\mathrm{} etc.), treat it
-        // as literal text rather than math.
-        if (/[\u4e00-\u9fa5]/.test(f)) {
-          const strippedText = f.replace(/\\(?:text|mathrm|mathbf|operatorname|mathcal|textstyle|displaystyle)\{[^{}]*\}/g, '');
-          if (/[\u4e00-\u9fa5]/.test(strippedText)) return match;
+
+        // Content outside \text{}-style wrappers, i.e. the part that must be real math.
+        const bare = f.replace(
+          /\\(?:text|mathrm|mathbf|operatorname|mathcal|mathsf|mathtt|textbf|textit|textstyle|displaystyle)\s*\{[^{}]*\}/g,
+          ''
+        );
+
+        if (/[\u4e00-\u9fa5]/.test(bare)) {
+          // Any LaTeX control sequence, sub/superscript, or math operator means the
+          // author clearly intended a formula, CJK or not.
+          const hasMathSignal = /\\[a-zA-Z]+|[_^{}]|[+\-*/=<>]|\\\\/.test(bare);
+          if (!hasMathSignal) return match;
+
+          // CJK punctuation is a strong sign this is a sentence, not a formula.
+          if (/[，。；：、！？“”‘’（）《》【】]/.test(bare)) return match;
         }
+
         const id = `LUOGUMATHINLINE${mathIdx++}END`;
         store.push({ id, type: 'inline', formula: f });
         return prefix + id;
