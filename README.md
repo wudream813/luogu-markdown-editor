@@ -121,6 +121,7 @@ localStorage 里，**不会上传到任何服务器**；换设备或清理浏览
 | `Ctrl + K` | 插入超链接 |
 | `Ctrl + Shift + K` | 插入行内数学公式 (`$x$`) |
 | `Ctrl + Shift + M` | 插入行间独立数学公式 (`$$ ... $$`) |
+| `Ctrl + Shift + ↑` / `Ctrl + Shift + ↓` | 提升 / 降低标题等级（H1～H6，段落⇄标题） |
 | `Ctrl + Z` | 撤销 |
 | `Ctrl + Y` 或 `Ctrl + Shift + Z` | 重做 |
 | `Tab` / `Shift + Tab` | 增加 / 减少缩进 (4 空格) |

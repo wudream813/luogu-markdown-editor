@@ -657,6 +657,14 @@ const safeStorage = {
             return;
           }
         }
+        // Promote / demote the current heading, as in Luogu's own editor
+        // (Mod+Shift+Up / Mod+Shift+Down). Levels clamp to the 1..6 range that
+        // Markdown defines; a plain paragraph becomes an <h1> when promoted.
+        if (e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault();
+          this.shiftHeadingLevel(e.key === 'ArrowUp' ? -1 : 1);
+          return;
+        }
         if (e.key === 'z' || e.key === 'Z') {
           if (e.shiftKey) {
             e.preventDefault();
@@ -1344,6 +1352,49 @@ const safeStorage = {
     insertHeading(level) {
       const prefix = '#'.repeat(level) + ' ';
       this.wrapSelection(`\n${prefix}`, '\n', `标题 ${level}`);
+    }
+
+    // Raise (delta < 0) or lower (delta > 0) the heading level of the line the caret
+    // is on. A non-heading line becomes an <h1> when promoted; an <h6> demoted past
+    // level 6 loses its markers and reverts to a paragraph. Levels never wrap.
+    shiftHeadingLevel(delta) {
+      const val = this.textarea.value;
+      const caret = this.textarea.selectionStart;
+      const lineStart = val.lastIndexOf('\n', caret - 1) + 1;
+      let lineEnd = val.indexOf('\n', caret);
+      if (lineEnd === -1) lineEnd = val.length;
+      const line = val.slice(lineStart, lineEnd);
+
+      const m = line.match(/^(#{1,6})\s+(.*)$/);
+      const current = m ? m[1].length : 0;
+      const text = m ? m[2] : line.trim();
+      // Nothing to demote on an empty line, and no heading to strip below level 1.
+      if (!text) return;
+
+      // Promoting a plain paragraph (level 0) makes it an <h1>; without this it
+      // would clamp straight back to 0 and the shortcut would appear dead.
+      let next;
+      if (current === 0) {
+        next = delta < 0 ? 1 : 0;
+      } else {
+        next = current + delta;
+        if (next < 0) next = 0;
+        if (next > 6) next = 6;
+      }
+      if (next === current) return;
+
+      const replacement = next === 0 ? text : '#'.repeat(next) + ' ' + text;
+      this.textarea.value = val.slice(0, lineStart) + replacement + val.slice(lineEnd);
+      // Keep the caret at the same offset within the text, not the raw line, so it
+      // does not drift as the '#' markers change length.
+      const delta2 = replacement.length - line.length;
+      const pos = Math.max(lineStart, caret + delta2);
+      this.textarea.selectionStart = this.textarea.selectionEnd = pos;
+
+      this.pushHistory();
+      this.render();
+      this.updateLineNumbers();
+      this.autoSave();
     }
 
     insertTaskList() {

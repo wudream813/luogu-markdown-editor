@@ -121,6 +121,9 @@ jobs:
       - name: App icon suite
         run: node test-browser/favicon.test.js
 
+      - name: Heading suite
+        run: node test-browser/heading.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:
