@@ -769,7 +769,12 @@ code[class*="language-"] {
 .luogu-code-pre code,
 .luogu-code-pre code[class*="language-"] {
   display: block !important;
-  width: 100% !important;
+  /* Grow to the widest line rather than to the visible width, so that when the
+     block is scrolled right the highlight backgrounds keep covering the row
+     instead of ending at the original fold. min-width keeps short blocks full
+     width so a highlight still spans the pane. */
+  width: max-content !important;
+  min-width: 100% !important;
   box-sizing: border-box !important;
 }
 
@@ -842,26 +847,28 @@ code[class*="language-"] {
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
-  /* Per-line horizontal scrolling is used so the gutter line number stays fixed on
-     the left while a long code line scrolls; the <pre> itself does not scroll. */
-  overflow-x: visible !important;
+  /* The whole block scrolls horizontally, so a single scrollbar sits at the very
+     bottom of the code block. Scrolling per line instead gave every overflowing
+     line its own scrollbar, wedged between that line and the next — it ate into
+     the line's height and covered the line below it. The gutter numbers stay put
+     because they are position:sticky against this scroll container. */
+  overflow-x: auto !important;
   width: 100%;
   box-sizing: border-box;
   display: block !important;
 }
 
 .code-line {
-  /* Each line is its own horizontal scroll container. The gutter line number is
-     position:sticky left, so when a long code line overflows only the code text
-     scrolls — the number stays pinned on the left and every row stays aligned.
-     This avoids both the flexbox collapse in legacy WebViews and the "line number
-     gets carried off-screen when the whole <pre> scrolls" issue. */
+  /* Lines do not scroll individually — see .luogu-code-pre. Each row must be at
+     least as wide as the widest line so that highlight backgrounds and the gutter
+     tint extend across the full scrolled width instead of stopping at the fold;
+     `width: max-content` with `min-width: 100%` achieves both. */
   display: block !important;
-  overflow-x: auto;
   white-space: pre !important;
   padding: 0 16px;
+  /* Inherit the <code> width (widest line) so every row — highlighted or not —
+     paints across the whole scrollable width. */
   min-width: 100%;
-  width: 100%;
   box-sizing: border-box;
 }
 

@@ -111,7 +111,9 @@ jobs:
           node test-browser/list-edge.test.js
 
       - name: Scroll sync suite
-        run: node test-browser/scroll-top.test.js
+        run: |
+          node test-browser/scroll-top.test.js
+          node test-browser/code-hscroll.test.js
 
   python:
     runs-on: ubuntu-latest
