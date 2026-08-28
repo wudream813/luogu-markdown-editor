@@ -497,3 +497,42 @@ test('raw HTML and unsafe URLs stay neutralised', () => {
   }
   assert.match(render('[x](https://luogu.com.cn)'), /href="https:\/\/luogu\.com\.cn"/);
 });
+
+// ------------------------------- Luogu link / ins syntax
+
+test('link labels may contain nested brackets', () => {
+  // Luogu problem titles almost always carry a bracketed tag, e.g.
+  // "[P3195 [HNOI2008] 玩具装箱](url)". Stopping at the first `]` made the whole
+  // link fail to parse and emit as literal text.
+  const h = render('[P3195 [HNOI2008] 玩具装箱](https://www.luogu.com.cn/problem/P3195)');
+  assert.match(h, /<a[^>]*href="https:\/\/www\.luogu\.com\.cn\/problem\/P3195"/);
+  assert.match(h, />P3195 \[HNOI2008\] 玩具装箱</);
+});
+
+test('++text++ renders as an underline', () => {
+  assert.match(render('++下划线++'), /<ins[^>]*>下划线<\/ins>/);
+  assert.match(render('++[文字](https://a.com)++'), /<ins[^>]*><a[^>]*>文字<\/a><\/ins>/);
+  // A lone ++ is not emphasis.
+  assert.doesNotMatch(render('a ++ b'), /<ins/);
+});
+
+test('decorated link destinations resolve to the real URL', () => {
+  // Pasting a link over selected text in Luogu's own editor yields
+  // `[标题](++[https://…](https://…)++)`: the destination is another Markdown link
+  // wrapped in ++, which failed the scheme check and produced href="#".
+  const src = '### [P3195 [HNOI2008] 玩具装箱](++[https://www.luogu.com.cn/problem/P3195](https://www.luogu.com.cn/problem/P3195))++';
+  const h = render(src);
+  assert.match(h, /<a[^>]*href="https:\/\/www\.luogu\.com\.cn\/problem\/P3195"/);
+  assert.doesNotMatch(h, /href="#"/);
+  // Unwrapping must not become a way to smuggle a dangerous scheme past sanitizeUrl.
+  assert.doesNotMatch(render('[x](++javascript:alert(1)++)'), /href="javascript:/i);
+  assert.doesNotMatch(render('[x](++[y](javascript:alert(1))++)'), /href="javascript:/i);
+  // The closing ++ lands outside the parens, leaving an orphan marker that used to
+  // render literally right after the link.
+  assert.doesNotMatch(render(src), /\+\+/);
+  // A genuine ins after a link is still honoured.
+  assert.match(render('[T](https://a.com) ++强调++'), /<ins[^>]*>强调<\/ins>/);
+  // Ordinary links, titles and parenthesised URLs still work.
+  assert.match(render('[t](https://a.com "T")'), /href="https:\/\/a\.com"[^>]*title="T"|title="T"[^>]*href="https:\/\/a\.com"/);
+  assert.match(render('[w](https://en.wikipedia.org/wiki/Foo_(bar))'), /href="https:\/\/en\.wikipedia\.org\/wiki\/Foo_\(bar\)"/);
+});

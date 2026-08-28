@@ -662,6 +662,81 @@ const safeStorage = {
         }
       }
 
+      // Enter inside a list continues it automatically.
+      //
+      // Typing a long list otherwise means re-typing the marker on every line, and
+      // renumbering by hand whenever an item is inserted in the middle.
+      // `isComposing` guards the IME: while a Chinese/Japanese candidate window is
+      // open, Enter commits the candidate and must not be treated as a newline —
+      // hijacking it would swallow the confirmation and mangle the text.
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229
+          && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const start = this.textarea.selectionStart;
+        const end = this.textarea.selectionEnd;
+        // Only for a plain caret, not a selection replacement.
+        if (start === end) {
+          const val = this.textarea.value;
+          const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+          const line = val.slice(lineStart, start);
+
+          //  indent  marker        checkbox        content
+          const m = line.match(/^(\s*)(?:([-*+])|(\d+)([.)]))(\s+)(?:\[([ xX])\]\s+)?(.*)$/);
+          if (m) {
+            const [, indent, bullet, num, delim, gap, box, content] = m;
+
+            if (content.trim() === '' && box === undefined) {
+              // Enter on an empty item ends the list rather than adding another
+              // empty bullet — the usual way out of a list.
+              e.preventDefault();
+              this.textarea.value = val.slice(0, lineStart) + val.slice(start);
+              this.textarea.selectionStart = this.textarea.selectionEnd = lineStart;
+              this.pushHistory();
+              this.render();
+              this.updateLineNumbers();
+              this.autoSave();
+              return;
+            }
+
+            // An empty task item is also an exit, but only once the checkbox is gone;
+            // strip it first so the second Enter leaves the list.
+            let marker;
+            if (bullet) {
+              marker = bullet + gap;
+            } else {
+              // Continue the numbering from this item.
+              marker = (parseInt(num, 10) + 1) + delim + gap;
+            }
+            if (box !== undefined) {
+              if (content.trim() === '') {
+                e.preventDefault();
+                const bare = indent + (bullet ? bullet + gap : num + delim + gap);
+                this.textarea.value = val.slice(0, lineStart) + bare + val.slice(start);
+                const pos = lineStart + bare.length;
+                this.textarea.selectionStart = this.textarea.selectionEnd = pos;
+                this.pushHistory();
+                this.render();
+                this.updateLineNumbers();
+                this.autoSave();
+                return;
+              }
+              // A new task item always starts unchecked.
+              marker += '[ ] ';
+            }
+
+            e.preventDefault();
+            const insert = '\n' + indent + marker;
+            this.textarea.value = val.slice(0, start) + insert + val.slice(end);
+            const pos = start + insert.length;
+            this.textarea.selectionStart = this.textarea.selectionEnd = pos;
+            this.pushHistory();
+            this.render();
+            this.updateLineNumbers();
+            this.autoSave();
+            return;
+          }
+        }
+      }
+
       // Tab key indentation
       if (e.key === 'Tab') {
         e.preventDefault();

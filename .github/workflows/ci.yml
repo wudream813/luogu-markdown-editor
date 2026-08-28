@@ -105,6 +105,11 @@ jobs:
       - name: Robustness / ReDoS suite
         run: node test-browser/robustness.test.js
 
+      - name: List continuation suite
+        run: |
+          node test-browser/list-continuation.test.js
+          node test-browser/list-edge.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:

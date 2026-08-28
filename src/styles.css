@@ -628,6 +628,17 @@ html, body {
   color: var(--text-muted);
 }
 
+/* ++text++ -> <ins>. The browser default for <ins> is also an underline, but it is
+   spelled out here so the print/PDF styles and the dark theme inherit the right
+   colour instead of a stray blue. */
+.preview-content ins,
+.luogu-ins {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  color: inherit;
+}
+
 .luogu-inline-code {
   font-family: var(--font-mono);
   font-size: 0.88em;

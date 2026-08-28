@@ -1219,8 +1219,39 @@
       });
 
       // Standard links: [text](url "title")
-      s = s.replace(/\[([^\]]+)\]\((.*?)\)/g, (match, label, target) => {
+      //
+      // The label may itself contain balanced brackets — Luogu problem titles almost
+      // always do, e.g. `[P3195 [HNOI2008] 玩具装箱](url)`. `[^\]]+` stopped at the
+      // first inner `]`, so the whole construct failed to parse and was emitted as
+      // literal text. Match nested pairs one level deep instead (enough for real
+      // titles) and let the URL run to the matching paren.
+      // The destination may also contain balanced parens. `(.*?)` stopped at the
+      // first `)`, which truncated Luogu's `[title](++[url](url)++)` decorated-link
+      // idiom and left a stray tail behind.
+      s = s.replace(/\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\(((?:[^()]|\([^()]*\))*)\)/g, (match, label, target) => {
         let rawTarget = target.trim();
+
+        // Luogu's editor produces a "decorated" destination when you paste a link over
+        // selected text: `[标题](++[https://…](https://…)++)`. The destination is then
+        // not a URL at all but another Markdown link wrapped in `++`, so the scheme
+        // check rejected it and the anchor pointed at `#`. Peel those layers off to
+        // recover the real target.
+        {
+          let prev;
+          do {
+            prev = rawTarget;
+            // The closing `++` often sits OUTSIDE the parens — the destination
+            // captured is `++[url](url)`, with the trailing `++` left in the
+            // surrounding text — so strip the markers independently rather than
+            // requiring a matched pair.
+            rawTarget = rawTarget.trim()
+              .replace(/^(?:\+\+|~~|\*{1,3}|__?)/, '')
+              .replace(/(?:\+\+|~~|\*{1,3}|__?)$/, '')
+              .trim();
+            const inner = rawTarget.match(/^\[([\s\S]*)\]\(((?:[^()]|\([^()]*\))*)\)$/);
+            if (inner) rawTarget = inner[2].trim();
+          } while (rawTarget !== prev);
+        }
         let title = '';
         const titleMatch = rawTarget.match(/^(.*?)\s+["'](.*?)["']$/);
         if (titleMatch) {
@@ -1233,6 +1264,19 @@
         return id;
       });
 
+      // In `[标题](++[url](url)++)` the opening `++` is inside the parens but the
+      // closing one lands after them, so unwrapping the destination above leaves an
+      // orphan `++` in the text with nothing to pair with — it rendered literally,
+      // right after the link. Drop a marker that immediately follows a link token
+      // and has no opener of its own earlier in the line.
+      s = s.replace(/(LUOGULINKTOKEN\d+END)(\+\+|~~)/g, (m, token, marker) => {
+        const before = s.slice(0, s.indexOf(m));
+        // Count markers before this point; an odd number means one is still open and
+        // this really is its closer, so leave it alone.
+        const opens = (before.match(new RegExp(marker === '++' ? '\\+\\+' : '~~', 'g')) || []).length;
+        return opens % 2 === 1 ? m : token;
+      });
+
       // 4.5. Neutralise any remaining raw HTML.
       //
       // Runs AFTER autolinks (`<https://...>`) and media/link tokenisation so those
@@ -1242,6 +1286,10 @@
 
       // 5. Emphasis & Strikethrough
       // Bold + Italic combinations:
+      // Underline: ++text++ (markdown-it's `ins` plugin, which Luogu enables).
+      // Runs before the emphasis rules so `++` is consumed as a unit.
+      s = s.replace(/\+\+(?=\S)([\s\S]*?\S)\+\+/g, '<ins class="luogu-ins">$1</ins>');
+
       s = s.replace(/\*\*\*([^\*\s][^\*]*?[^\*\s]|[^\*\s])\*\*\*/g, '<strong><em>$1</em></strong>');
       s = s.replace(/___([^_ \n][^_]*?[^_ \n]|[^_ \n])___/g, '<strong><em>$1</em></strong>');
       s = s.replace(/\*\*_\s*([^\*_]+?)\s*_\*\*/g, '<strong><em>$1</em></strong>');
