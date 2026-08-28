@@ -115,6 +115,12 @@ jobs:
           node test-browser/scroll-top.test.js
           node test-browser/code-hscroll.test.js
 
+      # A favicon is fetched as an image (strict XML), unlike inline SVG in HTML
+      # (lenient). A malformed icon therefore looks fine in a page and silently
+      # fails in the tab, so it has to be decoded the way a browser does.
+      - name: App icon suite
+        run: node test-browser/favicon.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:
