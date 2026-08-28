@@ -388,6 +388,7 @@ const safeStorage = {
         if (anchors[i].top < anchors[i - 1].top) anchors[i].top = anchors[i - 1].top;
       }
 
+
       this._anchors = anchors;
       this._anchorsKey = key;
       return anchors;
@@ -494,8 +495,19 @@ const safeStorage = {
           const line = this.visualOffsetToLine(tops, y);
           const docLine = this.visibleToDocLine(Math.floor(line));
           const frac = line - Math.floor(line);
-          const target = this.previewTopForLine(anchors, docLine, frac);
+          let target = this.previewTopForLine(anchors, docLine, frac);
           if (target !== null) {
+            // Scrolled fully to the top, the preview must be at 0 too.
+            //
+            // The first block sits below the preview's own top padding plus its own
+            // margin, so line 0 legitimately maps to a positive offset (~63px under a
+            // leading <h1>) — that offset is what keeps a heading aligned with its
+            // source line everywhere else, so it must not be scaled away. But applying
+            // it at y === 0 scrolls the document's leading whitespace out of view, and
+            // the preview looks stuck just below the start with no way to reach it.
+            //
+            // Treat only the exact top as the special case it is.
+            if (y <= 0) target = 0;
             const max = this.previewEl.scrollHeight - this.previewEl.clientHeight;
             const want = Math.max(0, Math.min(max, target));
             this.setScrollTop(this.previewEl, want);
