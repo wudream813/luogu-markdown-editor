@@ -628,15 +628,44 @@ html, body {
   color: var(--text-muted);
 }
 
-/* ++text++ -> <ins>. The browser default for <ins> is also an underline, but it is
-   spelled out here so the print/PDF styles and the dark theme inherit the right
-   colour instead of a stray blue. */
-.preview-content ins,
-.luogu-ins {
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-  color: inherit;
+/* GFM footnotes. Rendered as a trailing <section> separated from the body, with
+   small superscript references in the text. Mirrors remark-gfm's structure so the
+   result matches what Luogu produces. */
+.luogu-footnote-ref a {
+  text-decoration: none;
+  padding: 0 1px;
+}
+
+.luogu-footnotes {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color, #d0d7de);
+  font-size: 0.9em;
+}
+
+.luogu-footnotes-title {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: var(--text-secondary, #57606a);
+}
+
+.luogu-footnotes-list {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.luogu-footnote-item {
+  margin: 4px 0;
+}
+
+.luogu-footnote-item p {
+  margin: 0;
+}
+
+.luogu-footnote-back {
+  text-decoration: none;
+  margin-left: 4px;
 }
 
 .luogu-inline-code {

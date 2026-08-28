@@ -191,19 +191,152 @@
       this.taskCounter = 0;
       // Reset heading slug registry so anchor ids stay unique across the document
       this.headingSlugs = new Set();
+      // Reset GFM link reference definitions and footnotes for this render pass
+      this.linkRefs = new Map();
+      this.footnotes = new Map();
+      this.footnoteOrder = [];
+      this.footnoteRefCounts = new Map();
 
       // Stage 1: Math placeholder extraction
       const mathPlaceholders = [];
       let text = this.extractMath(markdown, mathPlaceholders);
 
+      // Stage 1b: Collect link reference definitions and footnote definitions.
+      // Both are "invisible" blocks: they define a target and must not appear in the
+      // output themselves. They have to be harvested before block parsing so that a
+      // reference used earlier in the document can still resolve to a definition that
+      // appears later (GFM allows forward references).
+      text = this.collectDefinitions(text);
+
       // Stage 2: Parse container blocks and special Luogu elements
       const lines = text.split(/\r?\n/);
       let html = this.parseBlocks(lines);
+
+      // Stage 2b: Append the GFM footnote section, if any footnotes were referenced.
+      html += this.renderFootnoteSection();
 
       // Stage 3: Restore math placeholders with KaTeX
       html = this.restoreMath(html, mathPlaceholders);
 
       return html;
+    }
+
+    // Harvest GFM link reference definitions (`[label]: url "title"`) and footnote
+    // definitions (`[^label]: text`) from the source, removing their lines from the
+    // text so they are never rendered as literal paragraphs.
+    //
+    // Both forms are only recognised at the start of a line (allowing up to three
+    // leading spaces, per CommonMark) and never inside a fenced code block.
+    collectDefinitions(text) {
+      const lines = text.split(/\r?\n/);
+      const kept = [];
+      let fence = null; // active code fence marker, or null
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // Track fenced code blocks so definitions inside them stay untouched.
+        const fenceMatch = line.match(/^\s*([`~]{3,})/);
+        if (fenceMatch) {
+          if (!fence) fence = fenceMatch[1][0];
+          else if (fenceMatch[1][0] === fence) fence = null;
+          kept.push(line);
+          continue;
+        }
+        if (fence) { kept.push(line); continue; }
+
+        // Indented code block (4+ spaces) — not a definition.
+        if (/^(?: {4}|\t)/.test(line)) { kept.push(line); continue; }
+
+        // Footnote definition: [^label]: content
+        // Continuation lines (indented, or immediately following non-blank lines)
+        // are folded into the same footnote.
+        const fnMatch = line.match(/^ {0,3}\[\^([^\]\s][^\]]*)\]:\s*([\s\S]*)$/);
+        if (fnMatch) {
+          const label = fnMatch[1].trim();
+          const parts = [fnMatch[2].trim()];
+          // Absorb continuation lines: indented by at least two spaces, or plain
+          // non-blank lines that are not themselves a new definition.
+          let j = i + 1;
+          while (j < lines.length) {
+            const nxt = lines[j];
+            if (/^\s*$/.test(nxt)) break;
+            if (/^ {0,3}\[\^[^\]]+\]:/.test(nxt)) break;
+            if (/^ {0,3}\[[^\^\]][^\]]*\]:/.test(nxt)) break;
+            if (/^\s*([`~]{3,})/.test(nxt)) break;
+            parts.push(nxt.trim());
+            j++;
+          }
+          if (!this.footnotes.has(label)) {
+            this.footnotes.set(label, parts.join(' ').trim());
+          }
+          i = j - 1;
+          continue; // drop these lines from output
+        }
+
+        // Link reference definition: [label]: url "optional title"
+        // The label must not start with `^` (that is a footnote) and the destination
+        // must look like a bare URL token (no spaces) to avoid swallowing ordinary
+        // prose that happens to contain a colon.
+        const refMatch = line.match(/^ {0,3}\[([^\^\]][^\]]*|[^\^\]])\]:\s*(\S+)(?:\s+["'(](.*)["')])?\s*$/);
+        if (refMatch) {
+          const label = refMatch[1].trim().toLowerCase();
+          if (!this.linkRefs.has(label)) {
+            this.linkRefs.set(label, { url: refMatch[2].trim(), title: (refMatch[3] || '').trim() });
+          }
+          continue; // drop this line from output
+        }
+
+        kept.push(line);
+      }
+
+      return kept.join('\n');
+    }
+
+    // Render the GFM footnote section appended at the end of the document. Only
+    // footnotes that were actually referenced in the text are emitted, in reference
+    // order, matching remark-gfm's behaviour.
+    renderFootnoteSection() {
+      if (!this.footnoteOrder || this.footnoteOrder.length === 0) return '';
+      const items = this.footnoteOrder.map((label, idx) => {
+        const num = idx + 1;
+        const body = this.footnotes.get(label) || '';
+        const rendered = this.renderInline(body);
+        const refCount = this.footnoteRefCounts.get(label) || 1;
+        // One back-link per reference, so multi-referenced footnotes can return to
+        // any of their call sites (GFM emits ↩ / ↩︎² style links).
+        let backs = '';
+        for (let k = 1; k <= refCount; k++) {
+          const suffix = k > 1 ? `-${k}` : '';
+          const sup = k > 1 ? `<sup>${k}</sup>` : '';
+          backs += ` <a href="#luogu-fnref-${num}${suffix}" class="luogu-footnote-back"`
+            + ` data-footnote-back aria-label="回到正文">↩${sup}</a>`;
+        }
+        return `<li id="luogu-fn-${num}" class="luogu-footnote-item"><p class="luogu-p">${rendered}${backs}</p></li>`;
+      }).join('');
+      return `<section class="luogu-footnotes" data-footnotes>`
+        + `<h2 class="luogu-footnotes-title">脚注</h2>`
+        + `<ol class="luogu-list luogu-footnotes-list">${items}</ol>`
+        + `</section>`;
+    }
+
+    // Emit a heading element with a unique anchor id. Shared by the ATX (`# x`) and
+    // setext (`x` + `===`) branches so both produce identical markup and both take
+    // part in the same slug-uniqueness registry.
+    renderHeading(level, headingText, lineIndex) {
+      const renderedText = this.renderInline(headingText);
+      let slug = headingText.toLowerCase()
+        .replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '-')
+        .replace(/^-|-$/g, '') || `h-${lineIndex}`;
+      // Guarantee unique anchor ids even if headings collide (e.g. repeated titles,
+      // or titles differing only by case / punctuation)
+      if (this.headingSlugs && this.headingSlugs.has(slug)) {
+        let k = 2;
+        while (this.headingSlugs.has(`${slug}-${k}`)) k++;
+        slug = `${slug}-${k}`;
+      }
+      if (this.headingSlugs) this.headingSlugs.add(slug);
+      return `<h${level} id="${this.options.headingPrefix}${slug}" class="luogu-heading luogu-h${level}">${renderedText}</h${level}>`;
     }
 
     // Extract KaTeX math expressions before markdown parsing
@@ -543,21 +676,36 @@
         // 5. Headings (# to ######)
         const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
         if (headingMatch) {
-          const level = headingMatch[1].length;
-          const headingText = headingMatch[2].trim();
-          const renderedText = this.renderInline(headingText);
-          let slug = headingText.toLowerCase().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]+/g, '-').replace(/^-|-$/g, '') || `h-${i}`;
-          // Guarantee unique anchor ids even if headings collide (e.g. repeated titles,
-          // or titles differing only by case / punctuation)
-          if (this.headingSlugs && this.headingSlugs.has(slug)) {
-            let n = 2;
-            while (this.headingSlugs.has(`${slug}-${n}`)) n++;
-            slug = `${slug}-${n}`;
-          }
-          if (this.headingSlugs) this.headingSlugs.add(slug);
-          out.push(`<h${level} id="${this.options.headingPrefix}${slug}" class="luogu-heading luogu-h${level}">${renderedText}</h${level}>`);
+          out.push(this.renderHeading(headingMatch[1].length, headingMatch[2].trim(), i));
           i++;
           continue;
+        }
+
+        // 5b. Setext headings: a line of text underlined by `===` (h1) or `---` (h2).
+        //
+        // Must be tested BEFORE the horizontal-rule branch, otherwise `标题\n---`
+        // renders as a paragraph followed by an <hr> instead of an <h2>. The
+        // underline may be indented up to three spaces and may carry trailing
+        // whitespace, but the content line must be a plain paragraph line — not a
+        // list item, quote, table, fence or container — or it belongs to that block.
+        if (i + 1 < n && !/^\s*$/.test(line)) {
+          const underline = lines[i + 1];
+          const setextMatch = underline && underline.match(/^ {0,3}(=+|-+)\s*$/);
+          const contentIsPlain = !/^\s*$/.test(line)
+            && !/^#{1,6}\s+/.test(line)
+            && !/^[`~]{3,}/.test(line)
+            && !/^\s*>/.test(line)
+            && !/^\s*([*+-]|\d+[.)])\s+/.test(line)
+            && !line.trim().startsWith('|')
+            && !/^::cute-table/i.test(line)
+            && !/^:{2,}/.test(line)
+            && !/^(?: {4}|\t)/.test(line);
+          if (setextMatch && contentIsPlain) {
+            const level = setextMatch[1][0] === '=' ? 1 : 2;
+            out.push(this.renderHeading(level, line.trim(), i));
+            i += 2;
+            continue;
+          }
         }
 
         // 6. Horizontal Rules (---, ***, ___ with optional spaces)
@@ -633,15 +781,28 @@
           }
           return false;
         };
+        // Set when the paragraph turned out to be the content of a setext heading,
+        // i.e. it was terminated by an `===` / `---` underline rather than by a blank
+        // line or another block. GFM folds the entire preceding paragraph into the
+        // heading, so `a\nb\n===` is a single <h1> reading "a b".
+        let setextLevel = 0;
         while (i < n) {
           const cur = lines[i];
           if (/^\s*$/.test(cur)) break;
+          // An underline closes the paragraph and promotes it to a heading, but only
+          // if we have already collected at least one content line.
+          if (pLines.length > 0) {
+            const ul = cur.match(/^ {0,3}(=+|-+)\s*$/);
+            if (ul) { setextLevel = ul[1][0] === '=' ? 1 : 2; i++; break; }
+          }
           if (isBlockStart(cur)) break;
           pLines.push(cur);
           i++;
         }
 
-        if (pLines.length > 0) {
+        if (setextLevel > 0) {
+          out.push(this.renderHeading(setextLevel, pLines.join(' ').trim(), i));
+        } else if (pLines.length > 0) {
           out.push(this.renderParagraph(pLines));
         } else if (i < n) {
           // Invariant: never leave `i` pointing at an unconsumed, non-advancing line.
@@ -1218,6 +1379,26 @@
         return id;
       });
 
+      // Footnote references: [^label]
+      // Tokenised before ordinary links so the `[...]` machinery cannot claim them.
+      // Definitions were harvested up-front; a reference with no matching definition
+      // is left as literal text, exactly like GFM.
+      s = s.replace(/\[\^([^\]\s][^\]]*)\]/g, (m, rawLabel) => {
+        const label = rawLabel.trim();
+        if (!this.footnotes || !this.footnotes.has(label)) return m;
+        if (!this.footnoteOrder.includes(label)) this.footnoteOrder.push(label);
+        const num = this.footnoteOrder.indexOf(label) + 1;
+        const count = (this.footnoteRefCounts.get(label) || 0) + 1;
+        this.footnoteRefCounts.set(label, count);
+        const suffix = count > 1 ? `-${count}` : '';
+        const id = `LUOGULINKTOKEN${linkTokens.length}END`;
+        linkTokens.push(
+          `<sup class="luogu-footnote-ref"><a href="#luogu-fn-${num}" id="luogu-fnref-${num}${suffix}"`
+          + ` data-footnote-ref class="luogu-link">${num}</a></sup>`
+        );
+        return id;
+      });
+
       // Standard links: [text](url "title")
       //
       // The label may itself contain balanced brackets — Luogu problem titles almost
@@ -1264,6 +1445,75 @@
         return id;
       });
 
+      // Reference links, resolved against the definitions harvested earlier:
+      //   full      [text][label]
+      //   collapsed [label][]
+      //   shortcut  [label]
+      // Runs AFTER inline links so `[a](b)` always wins, and after footnotes so
+      // `[^1]` is never mistaken for a shortcut reference. An unresolved label is
+      // left as literal text, matching GFM.
+      const refLink = (label, text) => {
+        const key = String(label).trim().toLowerCase();
+        if (!this.linkRefs || !this.linkRefs.has(key)) return null;
+        const { url, title } = this.linkRefs.get(key);
+        const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+        const id = `LUOGULINKTOKEN${linkTokens.length}END`;
+        linkTokens.push(
+          `<a href="${escapeHtml(sanitizeUrl(url))}"${titleAttr} target="_blank"`
+          + ` rel="noopener noreferrer" class="luogu-link">${this.renderInline(text)}</a>`
+        );
+        return id;
+      };
+
+      // Full and collapsed forms: [text][label] / [label][]
+      s = s.replace(/\[((?:[^\[\]]|\[[^\[\]]*\])+)\]\[([^\[\]]*)\]/g, (m, text, label) => {
+        const out = refLink(label.trim() === '' ? text : label, text);
+        return out === null ? m : out;
+      });
+
+      // Shortcut form: [label] — only when not already followed by `(` or `[`.
+      s = s.replace(/\[((?:[^\[\]]|\[[^\[\]]*\])+)\](?![\[(])/g, (m, label) => {
+        const out = refLink(label, label);
+        return out === null ? m : out;
+      });
+
+      // GFM autolink literal: a bare URL in running text becomes a link.
+      //
+      // Runs after every bracket form so a URL already inside `[](...)` or `<...>`
+      // is safely tokenised and cannot be matched again. Trailing punctuation is
+      // excluded from the link per the GFM spec (`见 https://a.com。` must not
+      // swallow the full-width period), and a trailing `)` is only kept when the
+      // URL contains a balanced opening paren — the Wikipedia-style case.
+      s = s.replace(/(^|[\s<（(【「，。、；：！？])((?:https?:\/\/|www\.)[^\s<>（）【】「」，。、；：！？]+)/gi,
+        (m, pre, matched) => {
+          // Trim trailing characters that are punctuation rather than part of the URL.
+          // A closing paren is kept only while it is balanced by an opening one inside
+          // the URL, so `.../wiki/A_(B)` keeps its paren but `(见 https://a.com)` does not.
+          let rawUrl = matched;
+          for (;;) {
+            const last = rawUrl[rawUrl.length - 1];
+            if (!last) break;
+            if (last === ')') {
+              const opens = (rawUrl.match(/\(/g) || []).length;
+              const closes = (rawUrl.match(/\)/g) || []).length;
+              if (closes > opens) { rawUrl = rawUrl.slice(0, -1); continue; }
+              break;
+            }
+            if ('.,;:!?\'"”’、。，；：！？'.includes(last)) { rawUrl = rawUrl.slice(0, -1); continue; }
+            break;
+          }
+          // A bare scheme with nothing after it is not a link.
+          if (!/^(?:https?:\/\/\S|www\.\S)/i.test(rawUrl) || /^https?:\/\/$/i.test(rawUrl)) return m;
+          const trailing = matched.slice(rawUrl.length);
+          const href = /^www\./i.test(rawUrl) ? `https://${rawUrl}` : rawUrl;
+          const id = `LUOGULINKTOKEN${linkTokens.length}END`;
+          linkTokens.push(
+            `<a href="${escapeHtml(sanitizeUrl(href))}" target="_blank"`
+            + ` rel="noopener noreferrer" class="luogu-link">${escapeHtml(rawUrl)}</a>`
+          );
+          return pre + id + trailing;
+        });
+
       // In `[标题](++[url](url)++)` the opening `++` is inside the parens but the
       // closing one lands after them, so unwrapping the destination above leaves an
       // orphan `++` in the text with nothing to pair with — it rendered literally,
@@ -1286,10 +1536,13 @@
 
       // 5. Emphasis & Strikethrough
       // Bold + Italic combinations:
-      // Underline: ++text++ (markdown-it's `ins` plugin, which Luogu enables).
-      // Runs before the emphasis rules so `++` is consumed as a unit.
-      s = s.replace(/\+\+(?=\S)([\s\S]*?\S)\+\+/g, '<ins class="luogu-ins">$1</ins>');
-
+      //
+      // NOTE: `++text++` is deliberately NOT supported. It was previously rendered as
+      // <ins>, on the assumption that Luogu enabled markdown-it's `ins` plugin. Luogu's
+      // current pipeline is remark/rehype on a GFM base (see the editor handbook,
+      // article/70w8j2pj) and neither GFM nor any of its documented directives define
+      // `++`. Rendering it here produced a false positive: underlined in this editor,
+      // literal `++text++` once pasted onto Luogu.
       s = s.replace(/\*\*\*([^\*\s][^\*]*?[^\*\s]|[^\*\s])\*\*\*/g, '<strong><em>$1</em></strong>');
       s = s.replace(/___([^_ \n][^_]*?[^_ \n]|[^_ \n])___/g, '<strong><em>$1</em></strong>');
       s = s.replace(/\*\*_\s*([^\*_]+?)\s*_\*\*/g, '<strong><em>$1</em></strong>');

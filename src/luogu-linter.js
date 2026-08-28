@@ -189,6 +189,20 @@
 
         if (inCodeBlock) continue;
 
+        // `++text++` is not Markdown. Some editors render it as an underline, but
+        // Luogu's renderer (Remark + Rehype on a GFM base) emits it literally, so
+        // the text ships with visible plus signs. Flag it rather than silently
+        // rendering something Luogu will not reproduce.
+        if (/\+\+(?=\S)[\s\S]*?\S\+\+/.test(line)) {
+          issues.push({
+            line: lineNum,
+            type: 'warning',
+            title: '洛谷不支持 ++下划线++ 语法',
+            message: '洛谷渲染器基于 GFM，没有 ++ 下划线语法，该写法会原样显示为 ++文字++。如需强调请改用 **加粗** 或 *斜体*。',
+            rule: 'unsupported-ins'
+          });
+        }
+
         // Skip pure container tags or horizontal rules or empty lines
         if (!trimmed || /^(\*{3,}|-{3,}|_{3,})$/.test(trimmed) || /^:{2,}/.test(trimmed) || /^::cute-table/i.test(trimmed)) {
           continue;

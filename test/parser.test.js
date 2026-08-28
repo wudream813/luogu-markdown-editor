@@ -509,10 +509,13 @@ test('link labels may contain nested brackets', () => {
   assert.match(h, />P3195 \[HNOI2008\] 玩具装箱</);
 });
 
-test('++text++ renders as an underline', () => {
-  assert.match(render('++下划线++'), /<ins[^>]*>下划线<\/ins>/);
-  assert.match(render('++[文字](https://a.com)++'), /<ins[^>]*><a[^>]*>文字<\/a><\/ins>/);
-  // A lone ++ is not emphasis.
+test('++text++ is NOT underline — Luogu does not support it', () => {
+  // Luogu's current pipeline is remark/rehype on a GFM base (editor handbook,
+  // article/70w8j2pj). Neither GFM nor any documented directive defines `++`, and
+  // remark-gfm emits it literally. Rendering it as <ins> was a false positive:
+  // underlined here, literal `++text++` once pasted onto Luogu.
+  assert.doesNotMatch(render('++下划线++'), /<ins/);
+  assert.match(render('++下划线++'), /\+\+下划线\+\+/);
   assert.doesNotMatch(render('a ++ b'), /<ins/);
 });
 
@@ -530,9 +533,107 @@ test('decorated link destinations resolve to the real URL', () => {
   // The closing ++ lands outside the parens, leaving an orphan marker that used to
   // render literally right after the link.
   assert.doesNotMatch(render(src), /\+\+/);
-  // A genuine ins after a link is still honoured.
-  assert.match(render('[T](https://a.com) ++强调++'), /<ins[^>]*>强调<\/ins>/);
+  // `++` after a link stays literal (Luogu has no ins syntax), but the orphan-marker
+  // cleanup must still not leave a stray marker glued to the anchor.
+  assert.match(render('[T](https://a.com) ++强调++'), /<\/a> \+\+强调\+\+/);
   // Ordinary links, titles and parenthesised URLs still work.
   assert.match(render('[t](https://a.com "T")'), /href="https:\/\/a\.com"[^>]*title="T"|title="T"[^>]*href="https:\/\/a\.com"/);
   assert.match(render('[w](https://en.wikipedia.org/wiki/Foo_(bar))'), /href="https:\/\/en\.wikipedia\.org\/wiki\/Foo_\(bar\)"/);
+});
+
+// ------------------------------- GFM parity (Luogu editor handbook, article/70w8j2pj)
+//
+// Luogu's current renderer is Remark + Rehype on a GFM base with remark-directive
+// plugins. These cases cover GFM constructs the hand-written parser used to miss,
+// each of which rendered correctly here but broke once pasted onto Luogu.
+
+test('setext headings', () => {
+  assert.match(render('标题\n==='), /<h1[^>]*>标题<\/h1>/);
+  assert.match(render('标题\n---'), /<h2[^>]*>标题<\/h2>/);
+  // The whole preceding paragraph folds into the heading.
+  assert.match(render('a\nb\n==='), /<h1[^>]*>a b<\/h1>/);
+  // An underline indented up to three spaces still counts.
+  assert.match(render('标题\n   ---'), /<h2[^>]*>标题<\/h2>/);
+  // A real horizontal rule must survive: `---` after a blank line is an <hr>.
+  const hr = render('前文\n\n---\n\n后文');
+  assert.match(hr, /<hr/);
+  assert.doesNotMatch(hr, /<h2/);
+  // `---` closing a list is still an <hr>, not a heading.
+  assert.match(render('- a\n\n---'), /<hr/);
+  // Inside a blockquote the underline applies to the quoted paragraph, matching
+  // remark: `> quote` + `> ===` is an <h1> nested in the <blockquote>.
+  assert.match(render('> quote\n> ==='), /<blockquote[\s\S]*<h1[^>]*>quote<\/h1>[\s\S]*<\/blockquote>/);
+  // A list item is not a paragraph, so an underline after it is not a heading.
+  assert.doesNotMatch(render('- item\n==='), /<h1/);
+  // Headings get unique slugs just like ATX ones.
+  const dup = render('标题\n===\n\n标题\n---');
+  assert.match(dup, /<h1[^>]*id="heading-标题"/);
+  assert.match(dup, /<h2[^>]*id="heading-标题-2"/);
+});
+
+test('GFM autolink literals', () => {
+  assert.match(render('访问 https://a.com 看看'), /<a[^>]*href="https:\/\/a\.com"[^>]*>https:\/\/a\.com<\/a>/);
+  // www. gets an https scheme.
+  assert.match(render('见 www.luogu.com.cn 吧'), /href="https:\/\/www\.luogu\.com\.cn"/);
+  // Trailing punctuation is not part of the URL — full-width included.
+  assert.match(render('见 https://a.com。'), /href="https:\/\/a\.com"/);
+  assert.match(render('见 https://a.com。'), /。/);
+  assert.match(render('see https://a.com.'), /href="https:\/\/a\.com"/);
+  // Balanced parens inside the URL are kept; an enclosing paren is not.
+  assert.match(render('见 https://en.wikipedia.org/wiki/A_(B) 页'), /href="https:\/\/en\.wikipedia\.org\/wiki\/A_\(B\)"/);
+  assert.match(render('(见 https://a.com)'), /href="https:\/\/a\.com"/);
+  // Query strings survive intact.
+  assert.match(render('https://a.com/p?x=1#z 完'), /href="https:\/\/a\.com\/p\?x=1#z"/);
+  // A bare scheme is not a link.
+  assert.doesNotMatch(render('https:// 不是链接'), /<a /);
+  // Code must never be autolinked.
+  assert.doesNotMatch(render('`https://a.com`'), /<a /);
+  assert.doesNotMatch(render('```\nsee https://a.com\n```'), /<a [^>]*href="https:\/\/a\.com"/);
+  // An existing Markdown link is not double-wrapped.
+  const once = render('[t](https://a.com)');
+  assert.equal((once.match(/<a /g) || []).length, 1);
+});
+
+test('link reference definitions', () => {
+  // Full, collapsed and shortcut forms all resolve.
+  assert.match(render('[t][r]\n\n[r]: https://a.com'), /<a[^>]*href="https:\/\/a\.com"[^>]*>t<\/a>/);
+  assert.match(render('[r][]\n\n[r]: https://a.com'), /href="https:\/\/a\.com"/);
+  assert.match(render('[r]\n\n[r]: https://a.com'), /href="https:\/\/a\.com"/);
+  // Labels are case-insensitive and definitions may appear before the reference.
+  assert.match(render('[R]\n\n[r]: https://a.com'), /href="https:\/\/a\.com"/);
+  assert.match(render('[r]: https://a.com\n\n[r]'), /href="https:\/\/a\.com"/);
+  // Titles are honoured.
+  assert.match(render('[r]\n\n[r]: https://a.com "T"'), /title="T"/);
+  // The definition line itself must never appear in the output.
+  assert.doesNotMatch(render('[t][r]\n\n[r]: https://a.com'), /\[r\]:/);
+  // An unresolved label stays literal, and array subscripts are untouched.
+  assert.match(render('[未定义][nope]'), /\[未定义\]\[nope\]/);
+  assert.match(render('a[i] 和 b[j]'), /a\[i\] 和 b\[j\]/);
+  // Definitions inside code blocks are left alone.
+  assert.match(render('```\n[r]: https://a.com\n```'), /\[r\]: https:\/\/a\.com/);
+  // Dangerous schemes are still sanitised through the reference path.
+  assert.doesNotMatch(render('[x]\n\n[x]: javascript:alert(1)'), /href="javascript:/i);
+});
+
+test('GFM footnotes', () => {
+  const h = render('正文[^1]\n\n[^1]: 注释内容');
+  assert.match(h, /<sup class="luogu-footnote-ref"><a href="#luogu-fn-1"/);
+  assert.match(h, /<section class="luogu-footnotes"/);
+  assert.match(h, /注释内容/);
+  // The definition line is consumed, not echoed as a paragraph.
+  assert.doesNotMatch(h, /<p[^>]*>\[\^1\]: /);
+  // Numbering follows reference order, not definition order.
+  const two = render('a[^b] c[^a]\n\n[^a]: A\n[^b]: B');
+  assert.match(two, /href="#luogu-fn-1"[^>]*>1<\/a>/);
+  assert.match(two, /<li id="luogu-fn-1"[^>]*>.*?B/s);
+  // Repeated references share one entry and get distinct back-links.
+  const rep = render('a[^1] b[^1]\n\n[^1]: n');
+  assert.match(rep, /id="luogu-fnref-1"/);
+  assert.match(rep, /id="luogu-fnref-1-2"/);
+  assert.equal((rep.match(/<li id="luogu-fn-/g) || []).length, 1);
+  // An undefined reference stays literal and emits no section.
+  assert.match(render('[^99]'), /\[\^99\]/);
+  assert.doesNotMatch(render('[^99]'), /luogu-footnotes/);
+  // A defined but unreferenced footnote produces no section either.
+  assert.doesNotMatch(render('文字\n\n[^1]: 未被引用'), /luogu-footnotes/);
 });
