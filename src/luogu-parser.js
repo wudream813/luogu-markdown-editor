@@ -799,7 +799,7 @@
         }
 
         // 9. Lists (Unordered, Ordered, Task lists)
-        if (/^\s*([*+-]|\d+\.)\s+/.test(line)) {
+        if (/^\s*([*+-]|\d+[.)])\s+/.test(line)) {
           const listResult = this.parseList(lines, i);
           out.push(listResult.html);
           i = listResult.nextIndex;
@@ -820,7 +820,7 @@
           if (/^::cute-table/i.test(cur)) return true;
           if (cur.trim().startsWith('|')) return true;
           if (/^\s*>/.test(cur)) return true;
-          if (/^\s*([*+-]|\d+\.)\s+/.test(cur)) return true;
+          if (/^\s*([*+-]|\d+[.)])\s+/.test(cur)) return true;
           if (/^(\*\s*){3,}$|^(-\s*){3,}$|^(_\s*){3,}$/.test(cur.trim())) return true;
           // Container block: must fully match the colon syntax used above (type name present
           // and the whole line matches, including any optional [title]/{param}).
@@ -1184,7 +1184,7 @@
 
     // Is this line a list item marker (bullet or ordered) followed by content?
     isListItem(line) {
-      return /^\s*([*+-]|\d+\.)\s+/.test(line);
+      return /^\s*([*+-]|\d+[.)])\s+/.test(line);
     }
 
     // Recursively parse all items at the given indentation level.
@@ -1192,13 +1192,13 @@
     parseListAt(lines, startIndex, baseIndent) {
       const n = lines.length;
       let i = startIndex;
-      const isOrdered = /^\s*\d+\.\s+/.test(lines[i]);
+      const isOrdered = /^\s*\d+[.)]\s+/.test(lines[i]);
       const listTag = isOrdered ? 'ol' : 'ul';
       // A list starting at something other than 1 must carry it through as `start`,
       // otherwise "5. / 6." silently renumbers to 1. / 2. — the numbers are often
       // meaningful (continuing a list interrupted by a code block, citing step N).
       const orderedStart = isOrdered
-        ? parseInt((lines[i].match(/^\s*(\d+)\./) || [])[1], 10)
+        ? parseInt((lines[i].match(/^\s*(\d+)[.)]/) || [])[1], 10)
         : 1;
       const items = [];
       let isTaskList = false;
@@ -1218,7 +1218,7 @@
           break;
         }
 
-        const match = line.match(/^(\s*)([*+-]|\d+\.)\s+(.*)$/);
+        const match = line.match(/^(\s*)([*+-]|\d+[.)])\s+(.*)$/);
         if (!match || this.indentOf(line) !== baseIndent) break;
 
         let rawText = match[3];
@@ -1595,8 +1595,22 @@
       // article/70w8j2pj) and neither GFM nor any of its documented directives define
       // `++`. Rendering it here produced a false positive: underlined in this editor,
       // literal `++text++` once pasted onto Luogu.
+      // CommonMark treats `_` and `*` differently: `*` may open/close emphasis inside
+      // a word, `_` may not. Without that rule identifiers common in solutions —
+      // `max_size 和 min_size`, `get_sum 和 update_tree` — turn into italics
+      // (`max<em>size 和 min</em>size`), which is exactly what Luogu does NOT do.
+      //
+      // `INTRAWORD` matches a character that makes a `_` delimiter "intraword": a
+      // letter, digit or CJK ideograph on the outer side of the delimiter run. The
+      // lookarounds below reject those positions so `_` only works at word edges,
+      // while `*` keeps its permissive behaviour.
+      const NOT_WORD_BEFORE = '(?<![0-9A-Za-z\\u4e00-\\u9fff])';
+      const NOT_WORD_AFTER = '(?![0-9A-Za-z\\u4e00-\\u9fff])';
+      const uRe = (body, flags = 'g') =>
+        new RegExp(NOT_WORD_BEFORE + body + NOT_WORD_AFTER, flags);
+
       s = s.replace(/\*\*\*([^\*\s][^\*]*?[^\*\s]|[^\*\s])\*\*\*/g, '<strong><em>$1</em></strong>');
-      s = s.replace(/___([^_ \n][^_]*?[^_ \n]|[^_ \n])___/g, '<strong><em>$1</em></strong>');
+      s = s.replace(uRe('___([^_ \\n][^_]*?[^_ \\n]|[^_ \\n])___'), '<strong><em>$1</em></strong>');
       s = s.replace(/\*\*_\s*([^\*_]+?)\s*_\*\*/g, '<strong><em>$1</em></strong>');
       s = s.replace(/_\*\*\s*([^\*_]+?)\s*\*\*_/g, '<em><strong>$1</strong></em>');
       s = s.replace(/\*__\s*([^\*_]+?)\s*__\*/g, '<em><strong>$1</strong></em>');
@@ -1604,14 +1618,18 @@
 
       // Bold: **text** or __text__
       s = s.replace(/\*\*([^\*\s][^\*]*?[^\*\s]|[^\*\s])\*\*/g, '<strong>$1</strong>');
-      s = s.replace(/__([^_ \n][^_]*?[^_ \n]|[^_ \n])__/g, '<strong>$1</strong>');
+      s = s.replace(uRe('__([^_ \\n][^_]*?[^_ \\n]|[^_ \\n])__'), '<strong>$1</strong>');
 
       // Italic: *text* or _text_
       s = s.replace(/(^|[^\*])\*([^\*\s][^\*]*?[^\*\s]|[^\*\s])\*(?!\*)/g, '$1<em>$2</em>');
-      s = s.replace(/(^|[^_])_([^_ \n][^_]*?[^_ \n]|[^_ \n])_(?!_)/g, '$1<em>$2</em>');
+      s = s.replace(uRe('_([^_ \\n][^_]*?[^_ \\n]|[^_ \\n])_(?!_)'), '<em>$1</em>');
 
-      // Strikethrough: ~~text~~
+      // Strikethrough. GFM accepts both `~~text~~` and the single-tilde `~text~`;
+      // only the doubled form was handled, so `~d~` shipped as literal text here but
+      // rendered struck-through on Luogu. Run the two-tilde rule first so `~~x~~` is
+      // not consumed as a single-tilde span containing a stray tilde.
       s = s.replace(/~~([^~\s][^~]*?[^~\s]|[^~\s])~~/g, '<del>$1</del>');
+      s = s.replace(/~([^~\s][^~]*?[^~\s]|[^~\s])~/g, '<del>$1</del>');
 
       // 6-9. Restore every protected token in ONE pass.
       //

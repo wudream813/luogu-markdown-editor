@@ -692,3 +692,41 @@ test('math blocks keep faithful source line numbers', () => {
   const end = h2.match(/<p[^>]*data-src-line="(\d+)"[^>]*>结尾<\/p>/);
   assert.equal(src2.split('\n')[Number(end[1])], '结尾');
 });
+
+test('underscore emphasis respects CommonMark word boundaries', () => {
+  // `_` may not open/close emphasis inside a word, so identifiers survive intact.
+  // Regression: `max_size 和 min_size` used to render as `max<em>size 和 min</em>size`.
+  for (const src of ['snake_case_word', 'a_b_c', 'my_var_name',
+                     '变量 max_size 和 min_size 的值', '函数 get_sum 和 update_tree']) {
+    assert.doesNotMatch(render(src), /<em>/, `${src} 不应产生斜体`);
+    assert.doesNotMatch(render(src), /<strong>/, `${src} 不应产生粗体`);
+  }
+  // Word-edge underscores still emphasise, including next to CJK punctuation.
+  assert.match(render('_斜体_'), /<em>斜体<\/em>/);
+  assert.match(render('这是 _斜体_ 文字'), /<em>斜体<\/em>/);
+  assert.match(render('__粗体__'), /<strong>粗体<\/strong>/);
+  assert.match(render('___both___'), /<strong><em>both<\/em><\/strong>/);
+  assert.match(render('（_i_）'), /<em>i<\/em>/);
+  // Asterisks keep their permissive intraword behaviour.
+  assert.match(render('a*i*b'), /a<em>i<\/em>b/);
+  assert.match(render('中文*i*中文'), /<em>i<\/em>/);
+});
+
+test('single-tilde strikethrough is supported alongside the doubled form', () => {
+  assert.match(render('~d~'), /<del>d<\/del>/);
+  assert.match(render('a ~d~ b'), /<del>d<\/del>/);
+  // The doubled form must not be mis-parsed as a single-tilde span.
+  assert.match(render('~~d~~'), /<del>d<\/del>/);
+  assert.doesNotMatch(render('~~d~~'), /~/);
+});
+
+test('ordered lists accept the ")" delimiter', () => {
+  const h = render('1) a\n2) b');
+  assert.match(h, /<ol/);
+  assert.match(h, /<li[^>]*>a<\/li>/);
+  assert.match(h, /<li[^>]*>b<\/li>/);
+  // `start` is still carried through with the paren delimiter.
+  assert.match(render('5) x\n6) y'), /start="5"/);
+  // A bare parenthesised number mid-sentence is not a list.
+  assert.doesNotMatch(render('(1) a'), /<ol/);
+});
