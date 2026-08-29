@@ -637,3 +637,58 @@ test('GFM footnotes', () => {
   // A defined but unreferenced footnote produces no section either.
   assert.doesNotMatch(render('文字\n\n[^1]: 未被引用'), /luogu-footnotes/);
 });
+
+// ------------------------------- Display math is a line-based fence
+//
+// Luogu renders with remark-math, where `$$` is a line-based fence rather than a
+// free-floating delimiter. A naive /\$\$([\s\S]*?)\$\$/ pairs any two `$$` in the
+// document and silently swallows prose across blank lines.
+
+test('$$ display math follows remark-math fence rules', () => {
+  // The reported case: `文字 $$ s` must stay literal because the `$$` is not at the
+  // start of a line; the standalone `$$` below then opens a real display block.
+  const h = render('文字 $$ s\n\n$$\n\ns\n\n$$');
+  assert.match(h, /<p[^>]*>文字 \$\$ s<\/p>/);
+  assert.match(h, /luogu-math-display/);
+  // The literal text must not be eaten into the formula.
+  assert.doesNotMatch(h, /luogu-math-display[\s\S]*文字/);
+
+  // A fence at line start opens a block.
+  assert.match(render('$$\nx^2\n$$'), /luogu-math-display/);
+  // Up to three leading spaces still counts as a fence.
+  assert.match(render('  $$\nx\n$$'), /luogu-math-display/);
+  // Closed on the same line it is inline math, not a display block.
+  assert.match(render('$$x$$'), /luogu-math-inline/);
+  assert.doesNotMatch(render('$$x$$'), /luogu-math-display/);
+  assert.match(render('文字 $$x$$'), /luogu-math-inline/);
+  // Content after the opening fence on the same line is meta and is dropped.
+  assert.match(render('$$ x\ny\n$$'), /luogu-math-display/);
+  // An unclosed fence runs to end of input rather than consuming later text.
+  assert.match(render('$$\nx'), /luogu-math-display/);
+  // Fences inside code are inert.
+  assert.doesNotMatch(render('```\n$$\nx\n$$\n```'), /luogu-math-display/);
+  assert.doesNotMatch(render('`$$x$$`'), /luogu-math-(display|inline)/);
+  // Ordinary inline math is untouched.
+  assert.match(render('文字 $x$ 尾'), /luogu-math-inline/);
+});
+
+test('math blocks keep faithful source line numbers', () => {
+  // The placeholder collapses a multi-line block to one line, so the parser records
+  // the real span. If that accounting drifts, scroll sync jumps to the wrong place.
+  const src = '$$\n1\n2\n3\n4\n$$\n\n之后';
+  const h = render(src);
+  const line = h.match(/<p[^>]*data-src-line="(\d+)"[^>]*>之后<\/p>/);
+  assert.ok(line, '段落应带 data-src-line');
+  assert.equal(src.split('\n')[Number(line[1])], '之后');
+
+  // Same for an unclosed block followed by nothing, and for text between two blocks.
+  const src2 = '$$\na\n$$\n\n中间\n\n$$\nb\n$$\n\n结尾';
+  const h2 = render(src2);
+  for (const [, ln] of h2.matchAll(/data-src-line="(\d+)"/g)) {
+    assert.ok(Number(ln) < src2.split('\n').length, `行号 ${ln} 越界`);
+  }
+  const mid = h2.match(/<p[^>]*data-src-line="(\d+)"[^>]*>中间<\/p>/);
+  assert.equal(src2.split('\n')[Number(mid[1])], '中间');
+  const end = h2.match(/<p[^>]*data-src-line="(\d+)"[^>]*>结尾<\/p>/);
+  assert.equal(src2.split('\n')[Number(end[1])], '结尾');
+});

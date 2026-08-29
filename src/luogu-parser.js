@@ -364,14 +364,66 @@
         return id;
       });
 
-      // Display math: $$ ... $$ (can be multi-line or single line)
+      // Display math.
+      //
+      // Luogu renders with remark-math, where `$$` is a LINE-BASED fence, not a free
+      // floating delimiter pair. A naive /\$\$([\s\S]*?)\$\$/ pairs up any two `$$`
+      // anywhere in the document, which silently swallows prose: for
+      //
+      //     文字 $$ s
+      //
+      //     $$
+      //
+      // the greedy pair spans the blank line and eats "文字"'s trailing `$$ s`,
+      // whereas Luogu leaves `文字 $$ s` as literal text and opens a display block at
+      // the standalone `$$`. Mirror remark-math's actual rules instead:
+      //
+      //   * A fence line is `$$` at the start of a line (up to 3 leading spaces),
+      //     optionally followed by content on the same line ("$$ x" -> meta, ignored).
+      //     It opens a block that runs to the next such fence line, or to EOF.
+      //   * `$$...$$` closed on the SAME line is inline math, not a display block.
+      //   * `$$` appearing after other text on a line is literal text.
       let mathIdx = 0;
-      text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
-        const id = `LUOGUMATHBLOCK${mathIdx++}END`;
-        store.push({ id, type: 'display', formula: formula.trim() });
-        // Same reasoning as fenced code: remember the real span so line numbers stay
-        // faithful even though the placeholder collapses to one line.
-        this._tokenLines.set(id, match.split('\n').length);
+      {
+        const srcLines = text.split('\n');
+        const out = [];
+        for (let i = 0; i < srcLines.length; i++) {
+          const line = srcLines[i];
+          // A block fence: optional indent (<4 spaces, else it is an indented code
+          // block), then `$$`, with nothing but optional "meta" text after it. If a
+          // second `$$` closes on the same line it is inline math and handled later.
+          const fence = line.match(/^ {0,3}\$\$(.*)$/);
+          if (!fence || fence[1].includes('$$')) {
+            out.push(line);
+            continue;
+          }
+          // Collect until the closing fence line or end of input.
+          const body = [];
+          let j = i + 1;
+          let closed = false;
+          for (; j < srcLines.length; j++) {
+            if (/^ {0,3}\$\$\s*$/.test(srcLines[j])) { closed = true; break; }
+            body.push(srcLines[j]);
+          }
+          const id = `LUOGUMATHBLOCK${mathIdx++}END`;
+          store.push({ id, type: 'display', formula: body.join('\n').trim() });
+          // Remember the real span so line numbers stay faithful even though the
+          // placeholder collapses to a single line.
+          this._tokenLines.set(id, (closed ? j - i + 1 : j - i));
+          out.push(id);
+          i = closed ? j : j - 1;
+        }
+        text = out.join('\n');
+      }
+
+      // Inline display math: `$$x$$` closed on one line. remark-math treats this as
+      // inline math (rendered inline, not as a centred block), so it must be handled
+      // separately from the fence form above.
+      text = text.replace(/\$\$([^\n]+?)\$\$/g, (match, formula) => {
+        const f = formula.trim();
+        if (!f) return match;
+        const id = `LUOGUMATHINLINE${mathIdx++}END`;
+        store.push({ id, type: 'inline', formula: f });
         return id;
       });
 
