@@ -124,6 +124,12 @@ jobs:
       - name: Heading suite
         run: node test-browser/heading.test.js
 
+      # Shortcuts are dispatched as real key events: this catches both a handler
+      # that never fires and a missing preventDefault (Ctrl+D/Ctrl+1.. are claimed
+      # by the browser), plus collisions such as Ctrl+I swallowing Ctrl+Shift+I.
+      - name: Keyboard shortcuts suite
+        run: node test-browser/shortcuts.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:
