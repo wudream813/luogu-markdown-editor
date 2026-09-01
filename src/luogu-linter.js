@@ -78,8 +78,14 @@
     }
 
     // 6. Complexity big O: O(n log n) -> \mathcal{O}(n \log n)
+    //
+    // The `log` rule must not fire on a `log` that is already a macro. Step 4 has
+    // normally turned `log` into `\log` by now, and without the lookbehind this rule
+    // matched the bare `log` inside `\log`, leaving the backslash stranded as `\ `
+    // (a LaTeX hard space): `\mathcal{O}(n \log n)` -> `\mathcal{O}(n \ \log n)`.
+    // That is idempotence-breaking — every format pass corrupted the formula further.
     f = f.replace(/\bO\((.*?)\)/g, '\\mathcal{O}($1)');
-    f = f.replace(/\\mathcal\{O\}\((.*?)\s*log\s*(.*?)\)/g, '\\mathcal{O}($1 \\log $2)');
+    f = f.replace(/\\mathcal\{O\}\((.*?)\s*(?<!\\)\blog\s*(.*?)\)/g, '\\mathcal{O}($1 \\log $2)');
 
     // 7. Wrap bare CJK in \text{}: $中文$ -> $\text{中文}$
     f = wrapBareCjkInMath(f);
@@ -664,14 +670,7 @@
           return id;
         });
 
-        // 4. Protect escaped symbols
-        line = line.replace(/\\([\\`\*_{}\[\]()#+\-.!$~|])/g, (m) => {
-          const id = `LUOGUTOKENESC${tokenIdx++}END`;
-          tokens.push({ id, val: m });
-          return id;
-        });
-
-        // 5. Protect display math $$...$$ FIRST (and fix symbols inside)
+        // 4. Protect display math $$...$$ FIRST (and fix symbols inside)
         line = line.replace(/\$\$([\s\S]*?)\$\$/g, (match, formula) => {
           const id = `LUOGUTOKENDISPLAYMATH${tokenIdx++}END`;
           const fixed = '$$' + (formula.includes('\n') ? '\n' + fixFormulaMathSymbols(formula) + '\n' : fixFormulaMathSymbols(formula)) + '$$';
@@ -679,7 +678,7 @@
           return id;
         });
 
-        // 6. Protect inline math $...$ AFTER display math (and fix symbols inside).
+        // 5. Protect inline math $...$ AFTER display math (and fix symbols inside).
         // A span that is really two currency signs in prose ("花费$5和$10 元") must be
         // left completely alone — wrapping its text in \text{} would turn ordinary
         // prose into a formula.
@@ -695,6 +694,20 @@
           const id = `LUOGUTOKENINLINEMATH${tokenIdx++}END`;
           const fixed = '$' + fixFormulaMathSymbols(formula) + '$';
           tokens.push({ id, val: fixed });
+          return id;
+        });
+
+        // 6. Protect escaped symbols.
+        //
+        // This MUST run after the math rules above. It used to run before them, and
+        // because `\{` etc. were replaced by an opaque LUOGUTOKENESC<n>END first, the
+        // `$...$` matcher could no longer see a formula in `$\{$` — the token leaked
+        // into the document as literal text. Escapes inside math are part of the
+        // formula and are handled by fixFormulaMathSymbols; only escapes in ordinary
+        // prose still need protecting from the spacing rules.
+        line = line.replace(/\\([\\`\*_{}\[\]()#+\-.!$~|])/g, (m) => {
+          const id = `LUOGUTOKENESC${tokenIdx++}END`;
+          tokens.push({ id, val: m });
           return id;
         });
 

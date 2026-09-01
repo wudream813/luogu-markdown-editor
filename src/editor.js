@@ -636,7 +636,8 @@ const safeStorage = {
           this.insertBold();
           return;
         }
-        if (e.key === 'i' || e.key === 'I') {
+        // Must not swallow Mod+Shift+I (insert image) — check the modifier first.
+        if ((e.key === 'i' || e.key === 'I') && !e.shiftKey) {
           e.preventDefault();
           this.insertItalic();
           return;
@@ -650,10 +651,62 @@ const safeStorage = {
           }
           return;
         }
-        if (e.key === 'm' || e.key === 'M') {
-          if (e.shiftKey) {
+
+        // Luogu's own bindings (handbook article/70w8j2pj). Where this editor
+        // already had a different key for the same action, BOTH are kept: muscle
+        // memory built here keeps working, and anyone coming from Luogu finds the
+        // documented key. Mod+D is strikethrough on Luogu; browsers use it for
+        // "bookmark", so preventDefault is required.
+        if (e.key === 'd' || e.key === 'D') {
+          if (!e.shiftKey) {
             e.preventDefault();
-            this.insertMathBlock();
+            this.insertStrikethrough();
+            return;
+          }
+        }
+        if (e.key === 'm' || e.key === 'M') {
+          e.preventDefault();
+          // Luogu: Mod+M = math. Existing binding: Mod+Shift+M = display math.
+          if (e.shiftKey) this.insertMathBlock();
+          else this.insertMathInline();
+          return;
+        }
+        if (e.shiftKey && (e.key === 'h' || e.key === 'H')) {
+          e.preventDefault();
+          this.insertHR();
+          return;
+        }
+        if (e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+          e.preventDefault();
+          this.openModal('linkModal');
+          return;
+        }
+        if (e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+          e.preventDefault();
+          this.openModal('imageModal');
+          return;
+        }
+        if (e.shiftKey && (e.key === 'q' || e.key === 'Q')) {
+          e.preventDefault();
+          this.insertQuote();
+          return;
+        }
+        // Mod+Shift+<digit>. `e.key` is unreliable for digits with Shift held —
+        // on many layouts Shift+1 reports "!" — so match e.code instead, which is
+        // the physical key and stays "Digit1" regardless of modifiers or layout.
+        if (e.shiftKey && /^Digit[12789]$/.test(e.code || '')) {
+          const action = {
+            Digit1: () => this.openModal('codeModal'),
+            // initTableBuilder both builds the grid and opens the modal; opening
+            // the modal directly would show an unpopulated builder.
+            Digit2: () => this.initTableBuilder(3, 4),
+            Digit7: () => this.insertUnorderedList(),
+            Digit8: () => this.insertOrderedList(),
+            Digit9: () => this.insertTaskList(),
+          }[e.code];
+          if (action) {
+            e.preventDefault();
+            action();
             return;
           }
         }
@@ -1399,6 +1452,14 @@ const safeStorage = {
 
     insertTaskList() {
       this.insertAtCursor('\n- [ ] 未完成任务项\n- [x] 已完成任务项\n');
+    }
+
+    insertUnorderedList() {
+      this.insertAtCursor('\n- 列表项一\n- 列表项二\n- 列表项三\n');
+    }
+
+    insertOrderedList() {
+      this.insertAtCursor('\n1. 列表项一\n2. 列表项二\n3. 列表项三\n');
     }
 
     // Insert Luogu Containers

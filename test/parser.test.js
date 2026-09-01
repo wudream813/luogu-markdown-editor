@@ -730,3 +730,36 @@ test('ordered lists accept the ")" delimiter', () => {
   // A bare parenthesised number mid-sentence is not a list.
   assert.doesNotMatch(render('(1) a'), /<ol/);
 });
+
+test('formatSpacing does not corrupt an already-formatted \\log', () => {
+  // Regression: the big-O rule matched the bare `log` inside an existing `\log`,
+  // stranding the backslash as `\ ` (a LaTeX hard space). Formatting was therefore
+  // not idempotent — each pass degraded the formula further.
+  const src = '$\\mathcal{O}(n \\log n)$。';
+  assert.equal(linter.formatSpacing(src), src);
+  assert.doesNotMatch(linter.formatSpacing(src), /\\ /);
+
+  // The rule must still upgrade an unformatted complexity.
+  assert.match(linter.formatSpacing('$O(n log n)$。'), /\\mathcal\{O\}\(n \\log n\)/);
+  assert.match(linter.formatSpacing('$O(n^2 log n)$。'), /\\mathcal\{O\}\(n\^2 \\log n\)/);
+
+  // Idempotent across repeated passes.
+  let s = '$O(n log n)$。';
+  const once = linter.formatSpacing(s);
+  assert.equal(linter.formatSpacing(once), once);
+  assert.equal(linter.formatSpacing(linter.formatSpacing(once)), once);
+});
+
+test('formatSpacing keeps escaped braces inside math instead of leaking a token', () => {
+  // Regression: escape protection ran before the math rules, so `\{` became an
+  // opaque LUOGUTOKENESC<n>END and `$...$` no longer matched — the placeholder
+  // leaked into the document as visible text.
+  for (const src of ['$\\{$ 给变成 x。', '$\\{x\\}$。', '$\\{1,2\\}$ 是集合。']) {
+    const out = linter.formatSpacing(src);
+    assert.doesNotMatch(out, /LUOGUTOKEN/, `${src} 泄漏了内部 token`);
+    assert.equal(out, src);
+  }
+  // Escapes in ordinary prose are still protected from the spacing rules.
+  const prose = '这是 \\* 星号和 \\_ 下划线。';
+  assert.doesNotMatch(linter.formatSpacing(prose), /LUOGUTOKEN/);
+});

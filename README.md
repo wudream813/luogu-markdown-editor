@@ -113,18 +113,31 @@ localStorage 里，**不会上传到任何服务器**；换设备或清理浏览
 
 ## ⌨️ 常用快捷键
 
-| 快捷键 | 功能 |
-| :--- | :--- |
-| `Ctrl + S` | 保存 Markdown 文件到本地 |
-| `Ctrl + B` | 加粗选中文本 (`**加粗**`) |
-| `Ctrl + I` | 斜体选中文本 (`*斜体*`) |
-| `Ctrl + K` | 插入超链接 |
-| `Ctrl + Shift + K` | 插入行内数学公式 (`$x$`) |
-| `Ctrl + Shift + M` | 插入行间独立数学公式 (`$$ ... $$`) |
-| `Ctrl + Shift + ↑` / `Ctrl + Shift + ↓` | 提升 / 降低标题等级（H1～H6，段落⇄标题） |
-| `Ctrl + Z` | 撤销 |
-| `Ctrl + Y` 或 `Ctrl + Shift + Z` | 重做 |
-| `Tab` / `Shift + Tab` | 增加 / 减少缩进 (4 空格) |
+macOS 上 `Ctrl` 对应 `⌘`。**洛谷** 一列标记该键与[洛谷官方编辑器](https://www.luogu.com.cn/article/70w8j2pj)一致。
+
+| 快捷键 | 功能 | 洛谷 |
+| :--- | :--- | :---: |
+| `Ctrl + B` | 加粗选中文本 (`**加粗**`) | ✅ |
+| `Ctrl + I` | 斜体选中文本 (`*斜体*`) | ✅ |
+| `Ctrl + D` | 删除线 (`~~删除~~`) | ✅ |
+| `Ctrl + M` | 插入行内数学公式 (`$x$`) | ✅ |
+| `Ctrl + Shift + H` | 插入水平线 (`---`) | ✅ |
+| `Ctrl + Shift + L` | 插入超链接 | ✅ |
+| `Ctrl + Shift + I` | 插入图片 | ✅ |
+| `Ctrl + Shift + Q` | 插入引用块 (`>`) | ✅ |
+| `Ctrl + Shift + 1` | 插入代码块 | ✅ |
+| `Ctrl + Shift + 2` | 插入表格 | ✅ |
+| `Ctrl + Shift + 7` | 插入无序列表 | ✅ |
+| `Ctrl + Shift + 8` | 插入有序列表 | ✅ |
+| `Ctrl + Shift + 9` | 插入任务列表 | ✅ |
+| `Ctrl + Shift + ↑` / `Ctrl + Shift + ↓` | 提升 / 降低标题等级（H1～H6，段落⇄标题） | ✅ |
+| `Ctrl + S` | 保存 Markdown 文件到本地 | — |
+| `Ctrl + K` | 插入超链接（本编辑器旧键，仍可用） | — |
+| `Ctrl + Shift + K` | 插入行内数学公式（本编辑器旧键，仍可用） | — |
+| `Ctrl + Shift + M` | 插入行间独立数学公式 (`$$ ... $$`) | — |
+| `Ctrl + Z` | 撤销 | — |
+| `Ctrl + Y` 或 `Ctrl + Shift + Z` | 重做 | — |
+| `Tab` / `Shift + Tab` | 增加 / 减少缩进 (4 空格) | — |
 
 ---
 
