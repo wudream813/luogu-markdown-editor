@@ -130,6 +130,12 @@ jobs:
       - name: Keyboard shortcuts suite
         run: node test-browser/shortcuts.test.js
 
+      # Typora mode swaps rendered blocks for their Markdown source in place. The
+      # risk is source-range drift: committing a block must not shift the line count
+      # or clobber neighbouring blocks, which only shows up end-to-end.
+      - name: Typora mode suite
+        run: node test-browser/typora.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:

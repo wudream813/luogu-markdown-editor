@@ -44,7 +44,8 @@ const safeStorage = {
       this.linter = LinterClass ? new LinterClass() : null;
       
       this.docName = '洛谷题解_未命名.md';
-      this.currentMode = 'split'; // 'split' | 'editor-only' | 'preview-only'
+      this.currentMode = 'split'; // 'split' | 'editor-only' | 'preview-only' | 'typora'
+      this.typora = null;         // lazily constructed once the DOM is bound
       this.currentTheme = 'luogu';
       this.isSyncScrolling = false;
       this.undoStack = [];
@@ -80,6 +81,12 @@ const safeStorage = {
         console.error('Editor elements not found in DOM.');
         return;
       }
+
+      // Typora mode edits blocks straight in the preview. It is optional: if the
+      // module is absent the editor keeps working, just without the fourth mode.
+      const TyporaClass = (typeof LuoguTypora !== 'undefined') ? LuoguTypora
+        : (typeof window !== 'undefined' ? window.LuoguTypora : null);
+      this.typora = TyporaClass ? new TyporaClass(this) : null;
 
       // Load saved draft or initial demo template
       const savedContent = safeStorage.getItem('luogu_editor_draft');
@@ -1344,12 +1351,20 @@ const safeStorage = {
 
     // View Mode Switcher
     setViewMode(mode) {
+      // Leaving Typora mode must flush any block still open for editing, otherwise
+      // the in-progress text is discarded when the pane is hidden.
+      if (this.currentMode === 'typora' && mode !== 'typora' && this.typora) {
+        this.typora.disable();
+      }
+
       this.currentMode = mode;
       const workspace = document.getElementById('mainWorkspace');
       if (!workspace) return;
 
-      workspace.classList.remove('mode-split', 'mode-editor-only', 'mode-preview-only');
+      workspace.classList.remove('mode-split', 'mode-editor-only', 'mode-preview-only', 'mode-typora');
       workspace.classList.add(`mode-${mode}`);
+
+      if (mode === 'typora' && this.typora) this.typora.enable();
 
       // Update button active states
       document.querySelectorAll('.view-mode-btn').forEach(btn => {

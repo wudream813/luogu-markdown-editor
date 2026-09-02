@@ -533,6 +533,74 @@ html, body {
   display: none !important;
 }
 
+/* Typora mode: the preview pane becomes the whole workspace and doubles as the
+   editor. The source textarea stays in the DOM (it remains the canonical document
+   and every other feature reads from it) but is hidden along with the resizer. */
+.mode-typora .editor-pane,
+.mode-typora .split-resizer {
+  display: none !important;
+}
+
+.mode-typora .preview-pane {
+  /* Centre the column the way a document editor does, rather than letting text run
+     the full width of a maximised window. Tables and code blocks in solutions are
+     wide, so this is deliberately roomier than a prose-only measure. */
+  --typora-measure: 1000px;
+}
+
+.mode-typora .preview-content {
+  max-width: var(--typora-measure);
+  margin: 0 auto;
+  padding: 24px 32px 45vh;
+  /* Generous bottom padding keeps the last block reachable above the fold once it
+     expands into a textarea. */
+}
+
+/* Hint that blocks are clickable, without the noise of a permanent outline. */
+.preview-content.typora-mode > * {
+  border-radius: 4px;
+  transition: background-color 0.12s ease;
+}
+
+.preview-content.typora-mode > *:hover {
+  background-color: var(--bg-secondary);
+  cursor: text;
+}
+
+.preview-content.typora-mode:focus {
+  outline: none;
+}
+
+/* The in-place source editor swapped in for the block being edited. */
+.typora-editing {
+  margin: 4px 0;
+}
+
+.typora-block-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 2.4em;
+  padding: 10px 12px;
+  border: 1px solid var(--luogu-blue);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 4;
+}
+
+.typora-block-input:focus {
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.18);
+}
+
 /* Status Bar */
 .app-statusbar {
   height: var(--statusbar-height);

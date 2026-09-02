@@ -263,6 +263,9 @@
       <button class="tool-btn view-mode-btn" data-mode="preview-only" onclick="LuoguEditor.setViewMode('preview-only')"  title="纯预览阅读模式" aria-label="纯预览阅读模式">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       </button>
+      <button class="tool-btn view-mode-btn" data-mode="typora" onclick="LuoguEditor.setViewMode('typora')"  title="Typora 模式 (所见即所得，点击段落就地编辑)" aria-label="Typora 模式 (所见即所得，点击段落就地编辑)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      </button>
     </div>
   </div>
 
@@ -703,6 +706,15 @@
         <li><code>Ctrl + Z</code> / <code>Ctrl + Y</code>：撤销 / 重做</li>
         <li><code>Tab</code> / <code>Shift + Tab</code>：增加 / 减少 4 空格缩进</li>
       </ul>
+
+      <h4 style="color:var(--luogu-blue); margin-top: 16px;">🖊️ Typora 模式（所见即所得）：</h4>
+      <ul style="padding-left: 20px; margin-top: 6px;">
+        <li>点击工具栏右上角的 <b>✏️ 铅笔图标</b> 进入，此时预览区就是编辑区。</li>
+        <li><b>点击任意块</b>（段落、标题、列表、表格、代码块、公式、折叠框皆可）即展开它的 Markdown 源码就地编辑。</li>
+        <li><b>点击别处</b>、按 <code>Esc</code> 或 <code>Ctrl + Enter</code> 折叠回渲染效果。</li>
+        <li>块内可以照常敲回车写多行；撤销、自动保存、排版检查、导出全部照常工作。</li>
+        <li>随时可切回双栏模式，内容不会丢失。</li>
+      </ul>
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="LuoguEditor.closeModal('helpModal')">知道了</button>
@@ -725,6 +737,7 @@
   <script src="src/luogu-linter.js"></script>
   <script src="src/luogu-math-cheatsheet.js"></script>
   <script src="src/luogu-templates.js"></script>
+  <script src="src/luogu-typora.js"></script>
   <script src="src/editor.js"></script>
 
 </body>
