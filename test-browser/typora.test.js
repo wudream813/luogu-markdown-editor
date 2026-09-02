@@ -11,7 +11,9 @@ const {chromium}=require('playwright');
 const path=require('path');
 (async()=>{
 
-  const url=process.argv[2]||'file://'+path.resolve('/home/user/lme/LuoguMarkdownEditor.html');
+  // Resolve relative to this file, not a fixed path: CI checks the repo out under a
+  // different root, where an absolute /home/user/... path does not exist.
+  const url=process.argv[2]||'file://'+path.resolve(__dirname,'..','LuoguMarkdownEditor.html');
   const b=await chromium.launch();const p=await b.newPage();
   const errs=[];p.on('pageerror',e=>errs.push(e.message));
   await p.goto(url,{waitUntil:'networkidle'});
