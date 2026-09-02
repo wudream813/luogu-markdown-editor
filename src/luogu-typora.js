@@ -121,9 +121,96 @@
       if (this.openBlock && this.openBlock.wrapper.contains(e.target)) return;
 
       const block = this.blockFor(e.target);
-      if (!block || NON_EDITABLE.has(block.tagName)) { this.commit(); return; }
+
+      // Landing on a block that exists but refuses in-place editing (a horizontal
+      // rule has no meaningful source to show) should just close whatever was open —
+      // not start a new paragraph, which would make the rule impossible to click past.
+      if (block && NON_EDITABLE.has(block.tagName)) { this.commit(); return; }
+
+      if (!block) {
+        // Clicking the blank space between blocks (or anywhere in an empty document)
+        // starts a new paragraph there, the way Typora does. Without this the gaps are
+        // dead zones and the only way to add a block is to grow an existing one.
+        this.commit();
+        this.openGap(this.gapAt(e.clientY));
+        return;
+      }
 
       this.open(block);
+    }
+
+    /**
+     * Work out where a click in the blank space should insert.
+     *
+     * Returns the source line the new text should be spliced in at, found by walking
+     * the rendered blocks and taking the first one whose box starts below the click.
+     * Clicking past the last block appends at end of document.
+     */
+    gapAt(clientY) {
+      const blocks = Array.from(this.previewEl.children)
+        .filter((n) => n.nodeType === 1 && n.hasAttribute('data-src-line')
+          && n.style.display !== 'none');
+
+      const anchors = this.anchorList();
+      const all = this.lines();
+
+      for (const el of blocks) {
+        const r = el.getBoundingClientRect();
+        if (clientY < r.top) {
+          // Insert immediately before this block.
+          const start = parseInt(el.getAttribute('data-src-line'), 10);
+          return Number.isFinite(start) ? start : all.length;
+        }
+        if (clientY <= r.bottom) {
+          // Inside a block's box but not on the block itself (e.g. the margin of a
+          // centred figure). Treat it as "after this block".
+          const range = this.rangeOf(el, anchors);
+          return range ? range.end + 1 : all.length;
+        }
+      }
+      return all.length;
+    }
+
+    /** Open an empty editor that inserts at `atLine` instead of replacing a block. */
+    openGap(atLine) {
+      const all = this.lines();
+      const at = Math.max(0, Math.min(atLine, all.length));
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'typora-editing typora-inserting';
+
+      const ta = document.createElement('textarea');
+      ta.className = 'typora-block-input';
+      ta.value = '';
+      ta.placeholder = '在此输入 Markdown…';
+      ta.spellcheck = false;
+      wrapper.appendChild(ta);
+
+      // Place the editor visually where the click landed so the caret appears under
+      // the pointer rather than jumping to the end of the document.
+      const before = Array.from(this.previewEl.children).find((n) => {
+        if (n.nodeType !== 1 || !n.hasAttribute('data-src-line')) return false;
+        const s = parseInt(n.getAttribute('data-src-line'), 10);
+        return Number.isFinite(s) && s >= at;
+      }) || null;
+      this.previewEl.insertBefore(wrapper, before);
+
+      // An insertion is just a replacement of the empty range [at, at-1]: `commit`
+      // splices `end - start + 1 === 0` lines out and the new text in.
+      this.openBlock = {
+        wrapper,
+        textarea: ta,
+        block: null,
+        marker: document.createComment('typora-insert'),
+        range: { start: at, end: at - 1 },
+        inserting: true,
+      };
+
+      const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+      grow();
+      ta.addEventListener('input', grow);
+      ta.addEventListener('blur', () => this.commit());
+      ta.focus();
     }
 
     open(block) {
@@ -173,7 +260,8 @@
 
       const next = open.textarea.value;
       const all = this.lines();
-      const prev = all.slice(open.range.start, open.range.end + 1).join('\n');
+      // For an insertion the range is empty (end === start - 1), so this slice is ''.
+      const prev = open.inserting ? '' : all.slice(open.range.start, open.range.end + 1).join('\n');
 
       // Clean up the DOM swap regardless of whether anything changed.
       if (open.wrapper.parentNode) open.wrapper.parentNode.removeChild(open.wrapper);
@@ -182,8 +270,22 @@
 
       if (next === prev) return;           // nothing to do; keep the DOM as-is
 
-      all.splice(open.range.start, open.range.end - open.range.start + 1,
-        ...next.split('\n'));
+      // Abandoning an empty new paragraph must not dirty the document — otherwise a
+      // stray click in the margin would push a no-op onto the undo stack and mark the
+      // file changed.
+      if (open.inserting && next.trim() === '') return;
+
+      const replaceCount = open.range.end - open.range.start + 1;
+      const payload = next.split('\n');
+      if (open.inserting) {
+        // Keep the new block separated from its neighbours by a blank line, or the
+        // paragraph would be glued onto the previous one by the Markdown parser.
+        const prevLine = all[open.range.start - 1];
+        const nextLine = all[open.range.start];
+        if (prevLine !== undefined && prevLine.trim() !== '') payload.unshift('');
+        if (nextLine !== undefined && nextLine.trim() !== '') payload.push('');
+      }
+      all.splice(open.range.start, replaceCount, ...payload);
       // setContent runs the normal pipeline: history, re-render, line numbers, autosave.
       this.editor.setContent(all.join('\n'));
     }

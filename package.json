@@ -1,6 +1,6 @@
 {
   "name": "luogu-markdown-editor",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "description": "洛谷 Markdown & KaTeX 实时预览编辑器 —— 支持洛谷全部扩展语法的离线单文件双栏编辑器",
   "keywords": ["luogu", "markdown", "katex", "editor", "洛谷", "题解"],
   "license": "MIT",

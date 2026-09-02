@@ -160,6 +160,81 @@ const path=require('path');
   ck(!(await src()).includes('结尾第二段'),'撤销可回退 typora 编辑');
 
   ck(errs.length===0,'无 JS 报错',errs.join(';'));
+  // ---- 空行/间隙起草新段落 ----
+  // 1. 空文档：点正文区就能打字
+  await setSrc('');
+  await p.evaluate(()=>LuoguEditor.setViewMode('typora'));
+  await p.waitForTimeout(200);
+  await p.evaluate(()=>{const pc=document.getElementById('previewContent');
+    const r=pc.getBoundingClientRect();
+    pc.dispatchEvent(new MouseEvent('click',{bubbles:true,clientY:r.top+80,clientX:r.left+100}));});
+  await p.waitForTimeout(150);
+  ck(await p.evaluate(()=>!!document.querySelector('.typora-block-input')),'空文档点击可起草');
+  await p.keyboard.type('全新的一段。');
+  await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
+  await p.waitForTimeout(250);
+  ck((await src()).includes('全新的一段。'),'空文档写入成功',JSON.stringify(await src()));
+
+  // 2. 两块之间的空隙插入
+  await setSrc('第一段。\n\n第二段。');
+  await p.waitForTimeout(200);
+  const gapY=await p.evaluate(()=>{
+    const ps=[...document.querySelectorAll('#previewContent > p')];
+    const a=ps[0].getBoundingClientRect(),c=ps[1].getBoundingClientRect();
+    return (a.bottom+c.top)/2;});
+  await p.evaluate((cy)=>{const pc=document.getElementById('previewContent');
+    pc.dispatchEvent(new MouseEvent('click',{bubbles:true,clientY:cy,clientX:pc.getBoundingClientRect().left+100}));},gapY);
+  await p.waitForTimeout(150);
+  ck(await p.evaluate(()=>!!document.querySelector('.typora-block-input')),'块间空隙可起草');
+  await p.keyboard.type('插入的中间段。');
+  await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
+  await p.waitForTimeout(250);
+  s=await src();
+  const li=s.split('\n').filter(l=>l.trim());
+  ck(li[1]==='插入的中间段。','插到两段之间且顺序正确',JSON.stringify(li));
+  ck(/第一段。\n\n插入的中间段。\n\n第二段。/.test(s),'前后各有空行分隔',JSON.stringify(s));
+
+  // 3. 末尾追加
+  await p.evaluate(()=>{const pc=document.getElementById('previewContent');
+    const r=pc.getBoundingClientRect();
+    pc.dispatchEvent(new MouseEvent('click',{bubbles:true,clientY:r.bottom-40,clientX:r.left+100}));});
+  await p.waitForTimeout(150);
+  await p.keyboard.type('末尾追加段。');
+  await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
+  await p.waitForTimeout(250);
+  s=await src();
+  ck(s.trim().endsWith('末尾追加段。'),'末尾可追加',JSON.stringify(s.slice(-30)));
+
+  // 4. 空内容不脏文档
+  const before2=await src();
+  await p.evaluate(()=>{const pc=document.getElementById('previewContent');
+    const r=pc.getBoundingClientRect();
+    pc.dispatchEvent(new MouseEvent('click',{bubbles:true,clientY:r.bottom-30,clientX:r.left+100}));});
+  await p.waitForTimeout(150);
+  await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+  await p.waitForTimeout(250);
+  ck((await src())===before2,'空白起草放弃后文档不变');
+
+  // 5. 起草多行 / Markdown 语法
+  await p.evaluate(()=>{const pc=document.getElementById('previewContent');
+    const r=pc.getBoundingClientRect();
+    pc.dispatchEvent(new MouseEvent('click',{bubbles:true,clientY:r.bottom-30,clientX:r.left+100}));});
+  await p.waitForTimeout(150);
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');
+    t.value='## 新标题\n\n- 甲\n- 乙';t.blur();});
+  await p.waitForTimeout(300);
+  s=await src();
+  ck(s.includes('## 新标题')&&s.includes('- 甲'),'可起草多行 Markdown');
+  ck(await p.evaluate(()=>!!document.querySelector('#previewContent h2')),'新内容已渲染');
+
+  // 6. 点已有块仍是编辑而非插入
+  await p.evaluate(()=>[...document.querySelectorAll('#previewContent > p')].find(e=>e.textContent.includes('第一段')).click());
+  await p.waitForTimeout(150);
+  ck(await p.evaluate(()=>document.querySelector('.typora-block-input')?.value)==='第一段。','点已有块仍走编辑');
+  await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+  await p.waitForTimeout(200);
+
+  ck(errs.length===0,'无 JS 报错',errs.join(';'));
   console.log(`\nTypora ${pass+fail} 项，失败 ${fail}`);
   await b.close();process.exit(fail?1:0);
 })();

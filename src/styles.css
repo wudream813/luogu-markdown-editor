@@ -553,7 +553,11 @@ html, body {
   margin: 0 auto;
   padding: 24px 32px 45vh;
   /* Generous bottom padding keeps the last block reachable above the fold once it
-     expands into a textarea. */
+     expands into a textarea. It doubles as the click target for "start a new
+     paragraph at the end", so it must stay tall even for an empty document. */
+  min-height: 100%;
+  box-sizing: border-box;
+  cursor: text;
 }
 
 /* Hint that blocks are clickable, without the noise of a permanent outline. */
@@ -599,6 +603,17 @@ html, body {
 
 .typora-block-input:focus {
   box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.18);
+}
+
+.typora-block-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+/* A brand-new paragraph is dashed until it has content, so it reads as a draft
+   rather than as a block that already exists in the document. */
+.typora-inserting .typora-block-input {
+  border-style: dashed;
 }
 
 /* Status Bar */
