@@ -932,7 +932,7 @@
       return `
         <details class="luogu-callout luogu-callout-${calloutType}" ${isOpen ? 'open' : ''}${startLine >= 0 ? ` data-src-line="${startLine}"` : ''}${endLine >= 0 ? ` data-src-end-line="${endLine}"` : ''}>
           <summary class="luogu-callout-summary">
-            <span class="luogu-callout-icon">${icons[calloutType]}</span>
+            <span class="luogu-callout-icon" data-callout-type="${escapeHtml(calloutType)}">${icons[calloutType]}</span>
             <span class="luogu-callout-title">${titleContent}</span>
             <span class="luogu-callout-arrow">
               <svg viewBox="0 0 24 24" class="arrow-svg" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1048,7 +1048,7 @@
               ${copyBtn}
             </div>
           </div>
-          <pre class="luogu-code-pre ${hasLineNumbers ? 'has-line-numbers' : ''}"><code class="language-${escapeHtml(resolvedLang)}">${lineElements.join('')}</code></pre>
+          <pre class="luogu-code-pre ${hasLineNumbers ? 'has-line-numbers' : ''}" data-code-body="1"><code class="language-${escapeHtml(resolvedLang)}">${lineElements.join('')}</code></pre>
         </div>
       `;
     }
@@ -1137,11 +1137,16 @@
       html += `<table class="luogu-table${tuackClass}">`;
 
       // Header
+      //
+      // `data-cell-row` / `data-cell-col` give every cell a stable coordinate back
+      // into the source table. Typora mode uses them to edit one cell in place
+      // instead of dumping the whole table into a textarea; nothing else reads them,
+      // and they are inert for rendering/export.
       html += '<thead><tr>';
       for (let c = 0; c < numCols; c++) {
         const hText = headerCells[c] || '';
         const alignStyle = colAligns[c] ? ` style="text-align:${colAligns[c]}"` : '';
-        html += `<th${alignStyle}>${this.renderInline(hText)}</th>`;
+        html += `<th data-cell-row="-1" data-cell-col="${c}"${alignStyle}>${this.renderInline(hText)}</th>`;
       }
       html += '</tr></thead>';
 
@@ -1158,7 +1163,7 @@
           if (cell.colspan > 1) attrs += ` colspan="${cell.colspan}"`;
           if (cell.align) attrs += ` style="text-align:${cell.align}"`;
 
-          html += `<td${attrs}>${this.renderInline(cell.text)}</td>`;
+          html += `<td data-cell-row="${r}" data-cell-col="${c}"${attrs}>${this.renderInline(cell.text)}</td>`;
         }
         html += '</tr>';
       }

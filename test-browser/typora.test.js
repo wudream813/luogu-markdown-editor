@@ -235,6 +235,104 @@ const path=require('path');
   await p.waitForTimeout(200);
 
   ck(errs.length===0,'无 JS 报错',errs.join(';'));
+  // ---- 细粒度就地编辑（代码/表格/折叠框/bili）----
+  let sf;
+  const box=()=>p.evaluate(()=>document.querySelector('.typora-block-input')?.value);
+  const blur=async()=>{await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());await p.waitForTimeout(280);};
+  // ===== 1. 代码块：只改代码，不碰围栏/语言 =====
+  await setSrc('# T\n\n```cpp\nint main(){\n    return 0;\n}\n```\n\n后文。');
+  await p.evaluate(()=>LuoguEditor.setViewMode('typora'));await p.waitForTimeout(300);
+  await p.evaluate(()=>document.querySelector('pre[data-code-body]').click());
+  await p.waitForTimeout(200);
+  ck(box()!==undefined&&(await box())==='int main(){\n    return 0;\n}','代码块只展开代码体',JSON.stringify(await box()));
+
+  // Tab 缩进
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');t.focus();t.selectionStart=t.selectionEnd=0;});
+  await p.keyboard.press('Tab');await p.waitForTimeout(120);
+  ck((await box()).startsWith('    int'),'Tab 可插入缩进',JSON.stringify((await box()).slice(0,12)));
+  ck(await p.evaluate(()=>document.activeElement.classList.contains('typora-block-input')),'Tab 后焦点仍在框内');
+  await p.keyboard.press('Shift+Tab');await p.waitForTimeout(120);
+  ck((await box()).startsWith('int'),'Shift+Tab 可反缩进');
+  await blur();
+  sf=await src();
+  ck(sf.includes('```cpp')&&sf.includes('int main(){'),'围栏与语言保留',JSON.stringify(s));
+
+  // 改代码不影响语言
+  await p.evaluate(()=>document.querySelector('pre[data-code-body]').click());await p.waitForTimeout(200);
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');t.value='puts("hi");';t.blur();});
+  await p.waitForTimeout(300);
+  sf=await src();
+  ck(sf.includes('```cpp\nputs("hi");\n```'),'改代码体不动语言标记',JSON.stringify(s));
+
+  // ===== 2. 表格：只改一个格子 =====
+  await setSrc('| 甲 | 乙 |\n|:--:|:--:|\n| 1 | 2 |\n| 3 | 4 |');
+  await p.waitForTimeout(300);
+  await p.evaluate(()=>{const c=[...document.querySelectorAll('td[data-cell-col]')]
+    .find(x=>x.textContent.trim()==='4');c.click();});
+  await p.waitForTimeout(200);
+  ck((await box()).trim()==='4','点单元格只展开该格',JSON.stringify(await box()));
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');t.value=' 九 ';t.blur();});
+  await p.waitForTimeout(300);
+  sf=await src();
+  ck(sf.includes('| 3 | 九 |'),'只改中该格',JSON.stringify(s));
+  ck(sf.includes('| 甲 | 乙 |')&&sf.includes('|:--:|:--:|')&&sf.includes('| 1 | 2 |'),'其余行原样保留');
+  // 表头
+  await p.evaluate(()=>{const h=[...document.querySelectorAll('th[data-cell-col]')]
+    .find(x=>x.textContent.trim()==='甲');h.click();});
+  await p.waitForTimeout(200);
+  ck((await box()).trim()==='甲','点表头只展开该表头格',JSON.stringify(await box()));
+  await blur();
+
+  // ===== 3. 折叠框 =====
+  await setSrc(':::info[原标题]\n框内文字。\n:::');
+  await p.waitForTimeout(300);
+  // 标题
+  await p.evaluate(()=>document.querySelector('.luogu-callout-title').click());
+  await p.waitForTimeout(200);
+  ck((await box())==='原标题','点标题只展开标题',JSON.stringify(await box()));
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');t.value='新标题';t.blur();});
+  await p.waitForTimeout(300);
+  sf=await src();
+  ck(sf.includes(':::info[新标题]')&&sf.includes('框内文字。'),'只改标题不动其他',JSON.stringify(s));
+  // 图标切类别
+  await p.evaluate(()=>document.querySelector('.luogu-callout-icon').click());
+  await p.waitForTimeout(300);
+  sf=await src();
+  ck(sf.includes(':::success[新标题]'),'点图标切换类别 info->success',JSON.stringify(s));
+  // 内部文字
+  await p.evaluate(()=>{const c=document.querySelector('.luogu-callout-content p');c.click();});
+  await p.waitForTimeout(200);
+  ck((await box())==='框内文字。','点内部文字只展开该段',JSON.stringify(await box()));
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');t.value='改后的内文。';t.blur();});
+  await p.waitForTimeout(300);
+  sf=await src();
+  ck(sf.includes(':::success[新标题]')&&sf.includes('改后的内文。')&&sf.trim().endsWith(':::'),'改内文不破坏折叠框',JSON.stringify(s));
+
+  // ===== bilibili =====
+  await p.evaluate(()=>{const ta=document.getElementById('editorTextarea');
+    ta.value='![演示](bilibili:BV1GJ411x7h7)';ta.dispatchEvent(new Event('input',{bubbles:true}));
+    LuoguEditor.render();LuoguEditor.setViewMode('typora');});
+  await p.waitForTimeout(400);
+  ck(await p.evaluate(()=>!!document.querySelector('.luogu-bilibili-container')),'bili 已渲染');
+  // 点卡片头部（非播放按钮）
+  await p.evaluate(()=>{const h=document.querySelector('.luogu-bilibili-header')
+    ||document.querySelector('.luogu-bilibili-container');h.click();});
+  await p.waitForTimeout(250);
+  const vb=await p.evaluate(()=>document.querySelector('.typora-block-input')?.value);
+  ck(vb&&vb.includes('bilibili:BV1GJ411x7h7'),'点 bili 卡片可编辑 BV 号',JSON.stringify(vb));
+  await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');
+    t.value='![新标题](bilibili:BV1xx411c7XD)';t.blur();});
+  await p.waitForTimeout(350);
+  const sBili=await p.evaluate(()=>document.getElementById('editorTextarea').value);
+  ck(sBili.includes('BV1xx411c7XD')&&sBili.includes('新标题'),'改 BV 号与标题生效',JSON.stringify(s));
+  // 播放按钮仍可用（不被劫持成编辑）
+  await p.evaluate(()=>{const ta=document.getElementById('editorTextarea');
+    ta.value='![演示](bilibili:BV1GJ411x7h7)';ta.dispatchEvent(new Event('input',{bubbles:true}));LuoguEditor.render();});
+  await p.waitForTimeout(300);
+  await p.evaluate(()=>document.querySelector('.luogu-bilibili-facade')?.click());
+  await p.waitForTimeout(400);
+  ck(await p.evaluate(()=>!!document.querySelector('.luogu-bilibili-container iframe')),'播放按钮仍能加载视频');
+  ck(await p.evaluate(()=>!document.querySelector('.typora-block-input')),'播放按钮不触发编辑');
   console.log(`\nTypora ${pass+fail} 项，失败 ${fail}`);
   await b.close();process.exit(fail?1:0);
 })();

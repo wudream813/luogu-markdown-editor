@@ -571,6 +571,64 @@ html, body {
   cursor: text;
 }
 
+/* Blocks that paint their own background must not be tinted by the generic hover
+   above: a code block has a dark surface of its own, and washing --bg-secondary over
+   it (or over a table's zebra striping) produced visibly wrong colours. Highlight
+   them with a ring instead, which reads on both light and dark themes. */
+.preview-content.typora-mode > .luogu-code-block-wrapper:hover,
+.preview-content.typora-mode > .luogu-code-block-wrap:hover,
+.preview-content.typora-mode > .luogu-table-wrapper:hover,
+.preview-content.typora-mode > .luogu-bilibili-container:hover,
+.preview-content.typora-mode > details.luogu-callout:hover {
+  background-color: transparent;
+  box-shadow: 0 0 0 2px var(--luogu-blue-light, rgba(52, 152, 219, 0.35));
+}
+
+/* Inside those blocks, highlight the actual sub-target instead. */
+.preview-content.typora-mode .luogu-table td:hover,
+.preview-content.typora-mode .luogu-table th:hover {
+  box-shadow: inset 0 0 0 2px var(--luogu-blue);
+  cursor: text;
+}
+
+.preview-content.typora-mode .luogu-callout-title:hover {
+  text-decoration: underline dotted;
+  cursor: text;
+}
+
+.preview-content.typora-mode .luogu-callout-icon:hover {
+  cursor: pointer;
+  filter: brightness(1.25);
+}
+
+.preview-content.typora-mode pre[data-code-body]:hover {
+  cursor: text;
+}
+
+/* Sub-block editors sit inside an existing block, so they must not inherit the
+   full-width block spacing the top-level editor uses. */
+.typora-partial {
+  margin: 0;
+}
+
+
+.typora-code-input {
+  border-radius: 0;
+  border-color: var(--luogu-blue);
+  background: var(--code-bg, #2d2d2d);
+  color: var(--code-fg, #ccc);
+  tab-size: 4;
+}
+
+/* A cell / title editor should read as inline text, not as a block form field. */
+.typora-inline-input {
+  min-height: 0;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
 .preview-content.typora-mode:focus {
   outline: none;
 }
@@ -2381,4 +2439,14 @@ code[class*="language-"] {
   background: rgba(0, 0, 0, 0.08);
   padding: 1px 4px;
   border-radius: 3px;
+}
+
+/* Typora mode: hide the element that has been swapped out for an editor.
+   This must come last in the stylesheet — `.luogu-code-pre code` is also
+   `display:block !important`, and between two !important declarations of equal
+   specificity the later one wins. */
+.preview-content .typora-hidden,
+.preview-content .typora-hidden code,
+.preview-content .typora-hidden pre {
+  display: none !important;
 }
