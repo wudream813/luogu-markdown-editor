@@ -48,6 +48,7 @@
 
     disable() {
       if (!this.active) return;
+      this.closeCalloutMenu();
       this.commit();
       this.active = false;
       this.previewEl.classList.remove('typora-mode');
@@ -236,7 +237,7 @@
 
       // ---- callout: title text, type icon, and inner content are separate ---------
       const icon = e.target.closest('.luogu-callout-icon');
-      if (icon) { this.cycleCalloutType(icon, anchors, all); return true; }
+      if (icon) { this.openCalloutMenu(icon, all); return true; }
 
       const titleEl = e.target.closest('.luogu-callout-title');
       if (titleEl) {
@@ -262,6 +263,8 @@
       const r = parseInt(cell.getAttribute('data-cell-row'), 10);
       const c = parseInt(cell.getAttribute('data-cell-col'), 10);
       if (!Number.isFinite(r) || !Number.isFinite(c)) return null;
+      const rowspan = parseInt(cell.getAttribute('rowspan'), 10) || 1;
+      const colspan = parseInt(cell.getAttribute('colspan'), 10) || 1;
 
       // Walk the table's source lines, skipping the delimiter row, to find the line
       // this cell lives on. Header is row -1; body rows count from 0.
@@ -280,6 +283,27 @@
 
       const cols = this.splitCells(all[lineIdx]);
       if (!cols[c]) return null;
+
+      // A merged cell is edited as raw source. The rendered table shows one big box,
+      // but the markers that produced it (`<` to merge left, `^` to merge up) live in
+      // the neighbouring cells of the source; hiding them would make the merge
+      // impossible to adjust. So hand back every line/column the merge covers and let
+      // the author see `A |<` / `^ |^` exactly as written.
+      if (rowspan > 1 || colspan > 1) {
+        const startIdx = dataRows.findIndex((x) => x.i === lineIdx);
+        const parts = [];
+        for (let k = 0; k < rowspan; k++) {
+          const row = dataRows[startIdx + k];
+          if (!row) break;
+          const rc = this.splitCells(all[row.i]);
+          const first = rc[c];
+          const last = rc[Math.min(c + colspan - 1, rc.length - 1)];
+          if (!first || !last) break;
+          parts.push({ line: row.i, col: [first.start, last.end] });
+        }
+        if (parts.length) return { rect: parts };
+      }
+
       return { line: lineIdx, col: [cols[c].start, cols[c].end] };
     }
 
@@ -326,24 +350,94 @@
     }
 
     /** Clicking a callout's icon cycles info -> success -> warning -> error. */
-    cycleCalloutType(icon, anchors, all) {
+    /**
+     * Clicking a callout's icon opens a small menu to pick its type.
+     *
+     * A cycling click was tried first, but with four types it takes up to three
+     * blind clicks to reach the one you want and there is no way to see the options.
+     */
+    openCalloutMenu(icon, all) {
       const details = icon.closest('details.luogu-callout');
       if (!details) return;
       const start = parseInt(details.getAttribute('data-src-line'), 10);
       if (!Number.isFinite(start)) return;
       const line = all[start];
-      const m = typeof line === 'string'
-        && line.match(/^(\s*:{2,}\s*)([A-Za-z][\w-]*)/);
+      const m = typeof line === 'string' && line.match(/^(\s*:{2,}\s*)([A-Za-z][\w-]*)/);
       if (!m) return;
 
-      const ORDER = ['info', 'success', 'warning', 'error'];
       const cur = m[2].toLowerCase();
-      const i = ORDER.indexOf(cur);
-      if (i === -1) return;                       // align / epigraph: leave alone
-      const next = ORDER[(i + 1) % ORDER.length];
+      const TYPES = [
+        { id: 'info', label: '提示', color: '#3498db' },
+        { id: 'success', label: '成功', color: '#2ecc71' },
+        { id: 'warning', label: '警告', color: '#f39c12' },
+        { id: 'error', label: '错误', color: '#e74c3c' },
+      ];
+      // align / epigraph are containers too, but they have no "type" to switch.
+      if (!TYPES.some((t) => t.id === cur)) return;
 
       this.commit();
-      all[start] = m[1] + next + line.slice(m[1].length + m[2].length);
+      this.closeCalloutMenu();
+
+      const menu = document.createElement('div');
+      menu.className = 'typora-type-menu';
+      menu.setAttribute('role', 'menu');
+
+      for (const t of TYPES) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'typora-type-item' + (t.id === cur ? ' is-current' : '');
+        item.setAttribute('role', 'menuitem');
+        item.innerHTML = `<span class="typora-type-dot" style="background:${t.color}"></span>`
+          + `<span class="typora-type-label"></span>`;
+        item.querySelector('.typora-type-label').textContent = t.label;
+        // mousedown, not click: the icon's blur would otherwise tear the menu down
+        // before the click lands.
+        item.addEventListener('mousedown', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          this.setCalloutType(start, t.id);
+          this.closeCalloutMenu();
+        });
+        menu.appendChild(item);
+      }
+
+      document.body.appendChild(menu);
+      const r = icon.getBoundingClientRect();
+      menu.style.top = `${Math.round(r.bottom + 6)}px`;
+      menu.style.left = `${Math.round(r.left)}px`;
+      // Keep the menu on screen when the callout sits near the bottom edge.
+      const mb = menu.getBoundingClientRect();
+      if (mb.bottom > window.innerHeight - 8) {
+        menu.style.top = `${Math.round(r.top - mb.height - 6)}px`;
+      }
+
+      this._menu = menu;
+      this._menuAway = (ev) => {
+        if (this._menu && !this._menu.contains(ev.target)) this.closeCalloutMenu();
+      };
+      this._menuKey = (ev) => { if (ev.key === 'Escape') this.closeCalloutMenu(); };
+      setTimeout(() => {
+        document.addEventListener('mousedown', this._menuAway, true);
+        document.addEventListener('keydown', this._menuKey, true);
+      }, 0);
+    }
+
+    closeCalloutMenu() {
+      if (!this._menu) return;
+      if (this._menu.parentNode) this._menu.parentNode.removeChild(this._menu);
+      this._menu = null;
+      document.removeEventListener('mousedown', this._menuAway, true);
+      document.removeEventListener('keydown', this._menuKey, true);
+    }
+
+    /** Rewrite the directive name on a container's header line. */
+    setCalloutType(lineIdx, type) {
+      const all = this.lines();
+      const line = all[lineIdx];
+      const m = typeof line === 'string' && line.match(/^(\s*:{2,}\s*)([A-Za-z][\w-]*)/);
+      if (!m) return;
+      if (m[2].toLowerCase() === type) return;
+      all[lineIdx] = m[1] + type + line.slice(m[1].length + m[2].length);
       this.editor.setContent(all.join('\n'));
     }
 
@@ -438,7 +532,13 @@
       let range;
       let src;
 
-      if (spec && Array.isArray(spec.col)) {
+      if (spec && Array.isArray(spec.rect) && spec.rect.length) {
+        // Rectangular region: one source line per visual row of a merged cell.
+        const parts = spec.rect;
+        for (const part of parts) if (all[part.line] === undefined) return;
+        range = { start: parts[0].line, end: parts[parts.length - 1].line, rect: parts };
+        src = parts.map((p) => (all[p.line] || '').slice(p.col[0], p.col[1])).join('\n');
+      } else if (spec && Array.isArray(spec.col)) {
         const text = all[spec.line];
         if (text === undefined) return;
         range = { start: spec.line, end: spec.line, col: spec.col.slice() };
@@ -558,11 +658,14 @@
 
       const next = open.textarea.value;
       const all = this.lines();
+      const rect = open.range.rect;
       const col = open.range.col;
       // For an insertion the range is empty (end === start - 1), so this slice is ''.
-      const prev = col
-        ? (all[open.range.start] || '').slice(col[0], col[1])
-        : (open.inserting ? '' : all.slice(open.range.start, open.range.end + 1).join('\n'));
+      const prev = rect
+        ? rect.map((p) => (all[p.line] || '').slice(p.col[0], p.col[1])).join('\n')
+        : col
+          ? (all[open.range.start] || '').slice(col[0], col[1])
+          : (open.inserting ? '' : all.slice(open.range.start, open.range.end + 1).join('\n'));
 
       // Clean up the DOM swap regardless of whether anything changed.
       if (open.wrapper.parentNode) open.wrapper.parentNode.removeChild(open.wrapper);
@@ -578,6 +681,25 @@
       // stray click in the margin would push a no-op onto the undo stack and mark the
       // file changed.
       if (open.inserting && next.trim() === '') return;
+
+      // A merged cell writes each of its rows back into that row's own column span.
+      // Pipes are NOT escaped here: the whole point of this editor is to let the
+      // author retype the `<` / `^` markers and the bars that separate them.
+      if (rect) {
+        const rows = next.split('\n');
+        for (let k = 0; k < rect.length; k++) {
+          const p = rect[k];
+          const line = all[p.line] || '';
+          // Surplus lines are folded into the last row so a stray Enter cannot add
+          // table rows and desync the merge from its neighbours.
+          const text = (k === rect.length - 1 ? rows.slice(k) : [rows[k]])
+            .filter((x) => x !== undefined)
+            .join(' ');
+          all[p.line] = line.slice(0, p.col[0]) + text + line.slice(p.col[1]);
+        }
+        this.editor.setContent(all.join('\n'));
+        return;
+      }
 
       // A column slice rewrites one line in place: splice the new text between the
       // untouched head and tail so neighbouring cells / fence syntax survive verbatim.

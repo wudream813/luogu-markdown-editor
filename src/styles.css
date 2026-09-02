@@ -567,8 +567,14 @@ html, body {
 }
 
 .preview-content.typora-mode > *:hover {
-  background-color: var(--bg-secondary);
   cursor: text;
+}
+
+/* Only tint blocks that have no surface of their own. A code block / table / bilibili
+   card / callout paints its own background, and washing --bg-secondary over it made
+   the light theme show pale syntax colours on white. */
+.preview-content.typora-mode > *:hover:not(.luogu-code-block-wrapper):not(.luogu-code-block-wrap):not(.luogu-table-wrapper):not(.luogu-bilibili-container):not(details.luogu-callout) {
+  background-color: var(--bg-secondary);
 }
 
 /* Blocks that paint their own background must not be tinted by the generic hover
@@ -580,7 +586,10 @@ html, body {
 .preview-content.typora-mode > .luogu-table-wrapper:hover,
 .preview-content.typora-mode > .luogu-bilibili-container:hover,
 .preview-content.typora-mode > details.luogu-callout:hover {
-  background-color: transparent;
+  /* Deliberately does NOT touch background-color. These blocks paint their own
+     surface (a code block stays dark even under the light theme); an earlier version
+     forced `transparent` here, which dropped that background and left pale syntax
+     colours on white. The ring alone is enough of a hover affordance. */
   box-shadow: 0 0 0 2px var(--luogu-blue-light, rgba(52, 152, 219, 0.35));
 }
 
@@ -2449,4 +2458,53 @@ code[class*="language-"] {
 .preview-content .typora-hidden code,
 .preview-content .typora-hidden pre {
   display: none !important;
+}
+
+/* Callout type picker (Typora mode). Appended to <body> so it is never clipped by
+   the preview pane's overflow. */
+.typora-type-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 128px;
+  padding: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.typora-type-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.typora-type-item:hover {
+  background: var(--bg-secondary);
+}
+
+.typora-type-item.is-current {
+  font-weight: 600;
+}
+
+.typora-type-item.is-current::after {
+  content: "✓";
+  margin-left: auto;
+  color: var(--luogu-blue);
+}
+
+.typora-type-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
 }

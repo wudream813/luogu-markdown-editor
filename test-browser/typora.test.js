@@ -237,6 +237,7 @@ const path=require('path');
   ck(errs.length===0,'无 JS 报错',errs.join(';'));
   // ---- 细粒度就地编辑（代码/表格/折叠框/bili）----
   let sf;
+  const clickCell=(t)=>p.evaluate((x)=>{const c=[...document.querySelectorAll('td,th')].find(e=>e.textContent.trim()===x);if(c)c.click();},t);
   const box=()=>p.evaluate(()=>document.querySelector('.typora-block-input')?.value);
   const blur=async()=>{await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());await p.waitForTimeout(280);};
   // ===== 1. 代码块：只改代码，不碰围栏/语言 =====
@@ -294,11 +295,15 @@ const path=require('path');
   await p.waitForTimeout(300);
   sf=await src();
   ck(sf.includes(':::info[新标题]')&&sf.includes('框内文字。'),'只改标题不动其他',JSON.stringify(s));
-  // 图标切类别
+  // 图标弹菜单选类别（v1.14.0 起由循环切换改为下拉菜单）
   await p.evaluate(()=>document.querySelector('.luogu-callout-icon').click());
-  await p.waitForTimeout(300);
+  await p.waitForTimeout(250);
+  await p.evaluate(()=>{const it=[...document.querySelectorAll('.typora-type-item')]
+    .find(x=>x.textContent.includes('成功'));
+    it.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));});
+  await p.waitForTimeout(320);
   sf=await src();
-  ck(sf.includes(':::success[新标题]'),'点图标切换类别 info->success',JSON.stringify(s));
+  ck(sf.includes(':::success[新标题]'),'菜单选“成功”切换类别',JSON.stringify(sf));
   // 内部文字
   await p.evaluate(()=>{const c=document.querySelector('.luogu-callout-content p');c.click();});
   await p.waitForTimeout(200);
@@ -306,7 +311,7 @@ const path=require('path');
   await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');t.value='改后的内文。';t.blur();});
   await p.waitForTimeout(300);
   sf=await src();
-  ck(sf.includes(':::success[新标题]')&&sf.includes('改后的内文。')&&sf.trim().endsWith(':::'),'改内文不破坏折叠框',JSON.stringify(s));
+  ck(sf.includes(':::success[新标题]')&&sf.includes('改后的内文。')&&sf.trim().endsWith(':::'),'改内文不破坏折叠框',JSON.stringify(sf));
 
   // ===== bilibili =====
   await p.evaluate(()=>{const ta=document.getElementById('editorTextarea');
@@ -333,6 +338,59 @@ const path=require('path');
   await p.waitForTimeout(400);
   ck(await p.evaluate(()=>!!document.querySelector('.luogu-bilibili-container iframe')),'播放按钮仍能加载视频');
   ck(await p.evaluate(()=>!document.querySelector('.typora-block-input')),'播放按钮不触发编辑');
+
+  // ---- 要求 32: 折叠框类别下拉菜单 -------------------------------------------
+  {
+    await setSrc(':::info[标题]\n内容。\n:::');await p.waitForTimeout(320);
+    await p.evaluate(() => document.querySelector('.luogu-callout-icon').click());
+    await p.waitForTimeout(200);
+    ck(await p.evaluate(() => !!document.querySelector('.typora-type-menu')), '点图标弹出类别菜单');
+    ck(await p.evaluate(() => document.querySelectorAll('.typora-type-item').length) === 4, '菜单四个类别');
+    ck(await p.evaluate(() => !!document.querySelector('.typora-type-item.is-current')), '标出当前类别');
+    await p.evaluate(() => {
+      const w = [...document.querySelectorAll('.typora-type-item')].find((x) => x.textContent.includes('警告'));
+      w.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    await p.waitForTimeout(300);
+    ck((await src()).includes(':::warning[标题]'), '选警告写回源码');
+    ck(await p.evaluate(() => !document.querySelector('.typora-type-menu')), '选完菜单关闭');
+    await p.evaluate(() => document.querySelector('.luogu-callout-icon').click());
+    await p.waitForTimeout(180);
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(180);
+    ck(await p.evaluate(() => !document.querySelector('.typora-type-menu')), 'Esc 关闭菜单');
+  }
+
+  // ---- 要求 32: 合并单元格按原始标记编辑 ---------------------------------------
+  {
+    const TBL = '| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
+    await setSrc(TBL);await p.waitForTimeout(320);
+    await clickCell('A');await p.waitForTimeout(240);
+    const mv = await box();
+    ck(!!mv && mv.includes('<') && mv.includes('^'), '合并格编辑框显示 < 与 ^ 原始标记');
+    ck(!!mv && mv.split('\n').length === 2, '合并格按 rowspan 展开两行');
+    await p.evaluate(() => document.querySelector('.typora-block-input').blur());
+    await p.waitForTimeout(280);
+    ck((await src()) === TBL, '合并格原样提交不改文档');
+
+    await clickCell('A');await p.waitForTimeout(240);
+    await p.evaluate(() => {
+      const t = document.querySelector('.typora-block-input');
+      t.value = ' A | < \n B | C ';
+      t.dispatchEvent(new Event('input', { bubbles: true }));
+      t.blur();
+    });
+    await p.waitForTimeout(320);
+    const ms = await src();
+    ck(ms.includes('| B | C | 2 |'), '解除合并写回正确');
+    ck(ms.includes('| A | < | 1 |'), '相邻行未受影响');
+    ck(ms.split('\n').length === 4, '合并格编辑不增删表行');
+
+    await setSrc(TBL);await p.waitForTimeout(320);
+    await clickCell('1');await p.waitForTimeout(240);
+    ck((await box()).trim() === '1', '普通格仍只编辑自身');
+  }
+
   console.log(`\nTypora ${pass+fail} 项，失败 ${fail}`);
   await b.close();process.exit(fail?1:0);
 })();
