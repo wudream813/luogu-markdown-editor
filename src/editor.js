@@ -1053,7 +1053,14 @@ const safeStorage = {
       const oldKeys = oldNodes.map(keyOf);
       const newKeys = newNodes.map(keyOf);
 
-      const drop = (n) => { if (n && n.parentNode === parent) parent.removeChild(n); };
+      // Re-check the parent at call time, not at capture time: committing a Typora
+      // editor runs on blur and can detach nodes while this loop is walking, which
+      // made removeChild() throw "node is no longer a child of this node".
+      const drop = (n) => {
+        if (n && n.parentNode === parent) {
+          try { parent.removeChild(n); } catch (err) { /* already detached */ }
+        }
+      };
 
       let oi = 0;
       // Bounded lookahead keeps this linear; a match further than this away is treated
@@ -2316,23 +2323,23 @@ const safeStorage = {
     .luogu-callout[open] > .luogu-callout-summary .luogu-callout-arrow { transform: rotate(180deg); }
     .luogu-callout-content { padding: 14px 18px; border-top: 1px solid var(--border); font-size: 13px; }
     .luogu-callout-info { border-left: 4px solid #3498db; }
-    .luogu-callout-info .luogu-callout-summary { background: #ebf5fb; color: #1f618d; }
+    .luogu-callout-info > .luogu-callout-summary { background: #ebf5fb; color: #1f618d; }
     .luogu-callout-success { border-left: 4px solid #2ecc71; }
-    .luogu-callout-success .luogu-callout-summary { background: #eafaf1; color: #196f3d; }
+    .luogu-callout-success > .luogu-callout-summary { background: #eafaf1; color: #196f3d; }
     .luogu-callout-warning { border-left: 4px solid #e67e22; }
-    .luogu-callout-warning .luogu-callout-summary { background: #fef5e7; color: #b9770e; }
+    .luogu-callout-warning > .luogu-callout-summary { background: #fef5e7; color: #b9770e; }
     .luogu-callout-error { border-left: 4px solid #e74c3c; }
-    .luogu-callout-error .luogu-callout-summary { background: #fdedec; color: #943126; }
+    .luogu-callout-error > .luogu-callout-summary { background: #fdedec; color: #943126; }
     /* Dark theme callouts (导出主题切换时折叠框也要随之变色) */
     [data-theme="dark"] .luogu-callout { border-color: #334155; }
     [data-theme="dark"] .luogu-callout-info { border-left-color: #3498db; }
-    [data-theme="dark"] .luogu-callout-info .luogu-callout-summary { background: #12303f; color: #9ed6f5; }
+    [data-theme="dark"] .luogu-callout-info > .luogu-callout-summary { background: #12303f; color: #9ed6f5; }
     [data-theme="dark"] .luogu-callout-success { border-left-color: #2ecc71; }
-    [data-theme="dark"] .luogu-callout-success .luogu-callout-summary { background: #12321e; color: #a6e6c0; }
+    [data-theme="dark"] .luogu-callout-success > .luogu-callout-summary { background: #12321e; color: #a6e6c0; }
     [data-theme="dark"] .luogu-callout-warning { border-left-color: #e67e22; }
-    [data-theme="dark"] .luogu-callout-warning .luogu-callout-summary { background: #39280f; color: #f6cf8d; }
+    [data-theme="dark"] .luogu-callout-warning > .luogu-callout-summary { background: #39280f; color: #f6cf8d; }
     [data-theme="dark"] .luogu-callout-error { border-left-color: #e74c3c; }
-    [data-theme="dark"] .luogu-callout-error .luogu-callout-summary { background: #3a1d1d; color: #f2ada7; }
+    [data-theme="dark"] .luogu-callout-error > .luogu-callout-summary { background: #3a1d1d; color: #f2ada7; }
     /* Bilibili Video */
     .luogu-bilibili-container { margin: 1.5em 0; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; background: #111827; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
     .luogu-bilibili-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; background: #1f2937; color: #f9fafb; font-size: 12px; }

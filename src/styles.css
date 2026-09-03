@@ -517,6 +517,9 @@ html, body {
   flex: 1;
   padding: 24px 32px;
   overflow-y: auto;
+  /* Positioning context for Typora's overlay editors, which are placed in the
+     scroll container's own coordinate space. */
+  position: relative;
   line-height: 1.75;
   color: var(--text-primary);
   word-break: break-word;
@@ -600,9 +603,19 @@ html, body {
   cursor: text;
 }
 
+/* Only the title text is editable, so it is the only part of the header that gets a
+   text cursor and an edit affordance; the rest of the summary still toggles. */
 .preview-content.typora-mode .luogu-callout-title:hover {
-  text-decoration: underline dotted;
   cursor: text;
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+  background: rgba(52, 152, 219, 0.12);
+  border-radius: 3px;
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.12);
+}
+
+.preview-content.typora-mode .luogu-callout-summary {
+  cursor: pointer;
 }
 
 .preview-content.typora-mode .luogu-callout-icon:hover {
@@ -1204,6 +1217,61 @@ code[class*="language-"] {
   margin: 1em 0;
 }
 
+/* Typora mode: alignment containers are otherwise invisible — centred text looks
+   the same whether it came from `:::align{center}` or a lone short line — so the
+   editor marks their extent with a dashed rule and a corner label, the same idea as
+   a callout's coloured edge. Screen/print/export are untouched. */
+.preview-content.typora-mode [class*="luogu-align-"] {
+  position: relative;
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-top: 1.5em;
+}
+
+.preview-content.typora-mode [class*="luogu-align-"]::before {
+  position: absolute;
+  top: -0.75em;
+  left: 10px;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.preview-content.typora-mode .luogu-align-left::before { content: "居左"; }
+.preview-content.typora-mode .luogu-align-center::before { content: "居中"; }
+.preview-content.typora-mode .luogu-align-right::before { content: "居右"; }
+
+.preview-content.typora-mode [class*="luogu-align-"]:hover {
+  border-color: var(--luogu-blue);
+}
+
+.preview-content.typora-mode .luogu-epigraph {
+  border: 1px dashed var(--border-color);
+  border-radius: 4px;
+  margin-top: 1.6em;
+}
+
+.preview-content.typora-mode .luogu-epigraph::after {
+  content: "引言";
+  position: absolute;
+  top: -0.75em;
+  left: 10px;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  pointer-events: none;
+}
+
 /* Epigraph (引言) */
 .luogu-epigraph {
   position: relative;
@@ -1284,7 +1352,13 @@ code[class*="language-"] {
 }
 
 .luogu-callout-title {
-  flex: 1;
+  /* Only as wide as the text, with `margin-right:auto` keeping the arrow pinned
+     right. It used to be `flex:1`, which stretched the span across the whole
+     summary — so in Typora mode a click anywhere on the header row landed on the
+     title and opened the rename editor instead of expanding the box. */
+  flex: 0 1 auto;
+  margin-right: auto;
+  min-width: 0;
 }
 
 .luogu-callout-arrow {
@@ -2564,6 +2638,29 @@ table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
   /* The revealed markers are metadata, not prose: keep them from being selected or
      dragged while the pointer is just passing over the table. */
   user-select: none;
+}
+
+/* An editor pinned over the element it edits, leaving the document's own layout
+   untouched. A merged table cell cannot host an inline editor without the table
+   reflowing around it, so the cell editor floats instead. */
+.preview-content.typora-mode .typora-editing.typora-overlay {
+  position: absolute;
+  z-index: 40;
+  margin: 0;
+  padding: 0;
+}
+
+.preview-content.typora-mode .typora-editing.typora-overlay .typora-block-input {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 6px;
+  border: 2px solid var(--luogu-blue);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  text-align: center;
+  resize: none;
 }
 
 .preview-content .typora-hidden,

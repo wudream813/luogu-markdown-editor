@@ -513,6 +513,85 @@ const path=require('path');
     await p.keyboard.press('Escape');await p.waitForTimeout(200);
   }
 
+  // ---- 要求 36: align / epigraph 容器可视标识 ----------------------------------
+  {
+    await setSrc(':::align{center}\n居中文字。\n:::\n\n:::align{right}\n居右文字。\n:::\n\n:::epigraph[——otto]\n名言。\n:::');
+    await p.waitForTimeout(340);
+    const marks=await p.evaluate(()=>[...document.querySelectorAll('#previewContent [class*="luogu-align-"], #previewContent .luogu-epigraph')]
+      .map(e=>({cls:e.className,
+        label:getComputedStyle(e,e.classList.contains('luogu-epigraph')?'::after':'::before').content,
+        border:getComputedStyle(e).borderTopStyle})));
+    ck(marks.length===3,'三个容器都渲染');
+    ck(marks[0].label.includes('居中'),'居中容器有标签',JSON.stringify(marks[0].label));
+    ck(marks[1].label.includes('居右'),'居右容器有标签',JSON.stringify(marks[1].label));
+    ck(marks[2].label.includes('引言'),'引言容器有标签',JSON.stringify(marks[2].label));
+    ck(marks.every(m=>m.border==='dashed'),'容器有虚线边界');
+    // 退出 Typora 模式后不应残留标识
+    await p.evaluate(()=>LuoguEditor.setViewMode('preview'));
+    await p.waitForTimeout(300);
+    ck(await p.evaluate(()=>{const e=document.querySelector('#previewContent [class*="luogu-align-"]');
+      return getComputedStyle(e,'::before').content;})==='none','非 Typora 模式无标识');
+    await p.evaluate(()=>LuoguEditor.setViewMode('typora'));
+    await p.waitForTimeout(300);
+  }
+
+  // ---- 要求 36: 折叠框标题只在文字上编辑 ----------------------------------------
+  {
+    await setSrc(':::info[短标题]\n内容。\n:::');await p.waitForTimeout(340);
+    const g=await p.evaluate(()=>{const t=document.querySelector('.luogu-callout-title');
+      const smy=document.querySelector('summary');
+      const rng=document.createRange();rng.selectNodeContents(t);
+      const tr=rng.getClientRects()[0];const sr=smy.getBoundingClientRect();
+      return {tx:tr.x+tr.width/2,ty:tr.y+tr.height/2,titleW:t.getBoundingClientRect().width,
+        sumW:sr.width,blankX:sr.right-80,blankY:sr.y+sr.height/2};});
+    ck(g.titleW<g.sumW-40,'标题 span 不撑满整行',`${Math.round(g.titleW)}/${Math.round(g.sumW)}`);
+    const o0=await p.evaluate(()=>document.querySelector('details.luogu-callout').open);
+    await p.mouse.click(g.tx,g.ty);await p.waitForTimeout(300);
+    ck((await box())==='短标题','点标题文字打开重命名',JSON.stringify(await box()));
+    ck(await p.evaluate(()=>document.querySelector('details.luogu-callout').open)===o0,
+      '点标题文字不改变开合');
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);
+    await setSrc(':::info[短标题]\n内容。\n:::');await p.waitForTimeout(320);
+    const o1=await p.evaluate(()=>document.querySelector('details.luogu-callout').open);
+    await p.mouse.click(g.blankX,g.blankY);await p.waitForTimeout(300);
+    ck((await box())===undefined,'点标题栏空白不进入编辑');
+    ck(await p.evaluate(()=>document.querySelector('details.luogu-callout').open)!==o1,
+      '点标题栏空白切换开合');
+    await setSrc(':::info[短标题]\n内容。\n:::');await p.waitForTimeout(320);
+    await p.mouse.move(g.tx,g.ty);await p.waitForTimeout(240);
+    const hv=await p.evaluate(()=>{const cs=getComputedStyle(document.querySelector('.luogu-callout-title'));
+      return {cursor:cs.cursor,deco:cs.textDecorationLine,bg:cs.backgroundColor};});
+    ck(hv.cursor==='text','hover 标题为文本光标',JSON.stringify(hv));
+    ck(hv.deco.includes('underline')||hv.bg!=='rgba(0, 0, 0, 0)','hover 标题有视觉提示',JSON.stringify(hv));
+  }
+
+  // ---- 要求 36: 编辑合并格标记时表格保持正常渲染 --------------------------------
+  {
+    const TBL='| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
+    await setSrc(TBL);await p.waitForTimeout(340);
+    const cb=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')].find(x=>x.textContent.trim()==='A');
+      const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.move(cb.x,cb.y);await p.waitForTimeout(280);
+    const mk=await p.evaluate(()=>{const t=[...document.querySelectorAll('.typora-unmerged-cell')]
+      .find(x=>x.textContent.trim()==='^');if(!t)return null;
+      const r=t.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    ck(!!mk,'找到 ^ 临时格');
+    if(mk){
+      await p.mouse.click(mk.x,mk.y);await p.waitForTimeout(320);
+      ck((await box()).trim()==='^','只编辑该标记格',JSON.stringify(await box()));
+      const shp=await p.evaluate(()=>[...document.querySelectorAll('#previewContent table tr')]
+        .map(r=>[...r.children].map(c=>c.textContent.trim()+(c.getAttribute('rowspan')||'')+(c.getAttribute('colspan')||''))));
+      ck(JSON.stringify(shp[1])==='["A22","1"]','其余单元格恢复正常合并渲染',JSON.stringify(shp));
+      ck(await p.evaluate(()=>!document.querySelector('.typora-unmerged-cell')),'不残留临时格');
+      ck(await p.evaluate(()=>!!document.querySelector('.typora-editing.typora-overlay')),'编辑器为浮层');
+      await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
+      await p.waitForTimeout(320);
+      ck((await src())===TBL,'原样提交不改文档');
+    }
+  }
+
+
 
 
   console.log(`\nTypora ${pass+fail} 项，失败 ${fail}`);

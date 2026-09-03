@@ -131,6 +131,53 @@ const SNAP = `(function(root){
     ck(exp.tokens[k] === prev.tokens[k], `token 配色一致: ${k}`, `${prev.tokens[k]} vs ${exp.tokens[k]}`);
   }
 
+  // ---- 要求 36: 嵌套折叠框各用自身类型色 ----------------------------------------
+  {
+    const MD=[':::::warning[父容器]{open}','父层文字。','',
+      '::::success[子容器]{open}','子层文字。','',
+      ':::error[孙容器]{open}','孙层文字。',':::','::::',':::::'].join('\n');
+    const PROBE=(scoped)=>{
+      const sel=scoped?'#previewContent details.luogu-callout':'details.luogu-callout';
+      return [...document.querySelectorAll(sel)].map((d)=>{
+        const sm=d.querySelector(':scope > summary');
+        return {type:(d.className.match(/luogu-callout-(\w+)/)||[])[1],
+          edge:getComputedStyle(d).borderLeftColor,
+          bg:sm?getComputedStyle(sm).backgroundColor:null,
+          fg:sm?getComputedStyle(sm).color:null};});
+    };
+    const pg=await b.newPage({viewport:{width:1000,height:800}});
+    await pg.goto(url,{waitUntil:'networkidle'});
+    await pg.evaluate((v)=>{const ta=document.getElementById('editorTextarea');
+      ta.value=v;ta.dispatchEvent(new Event('input',{bubbles:true}));
+      LuoguEditor.render();LuoguEditor.setViewMode('preview');},MD);
+    await pg.waitForTimeout(500);
+    const prev=await pg.evaluate((f)=>eval('('+f+')')(true),PROBE.toString());
+    const html=await pg.evaluate(async()=>{let cap=null;const OB=window.Blob;
+      window.Blob=class extends OB{constructor(parts,o){super(parts,o);
+        if(o&&/html/.test(o.type||''))cap=parts[0];}};
+      window.showSaveFilePicker=undefined;
+      HTMLAnchorElement.prototype.click=function(){};
+      await LuoguEditor.exportStandaloneHTML();window.Blob=OB;return cap;});
+    await pg.close();
+    const out=await b.newPage({viewport:{width:1000,height:800}});
+    await out.setContent(html,{waitUntil:'networkidle'});
+    await out.waitForTimeout(400);
+    const exp=await out.evaluate((f)=>eval('('+f+')')(false),PROBE.toString());
+    await out.close();
+    ck(exp.length===3,'导出保留三层折叠框',String(exp.length));
+    ck(exp.map(x=>x.type).join(',')==='warning,success,error','层级类型正确',
+      exp.map(x=>x.type).join(','));
+    ck(new Set(exp.map(x=>x.edge)).size===3,'三层边框色互不相同',
+      JSON.stringify([...new Set(exp.map(x=>x.edge))]));
+    ck(new Set(exp.map(x=>x.bg)).size===3,'三层标题底色互不相同',
+      JSON.stringify([...new Set(exp.map(x=>x.bg))]));
+    for(let i=0;i<3;i++){
+      ck(exp[i].edge===prev[i].edge&&exp[i].bg===prev[i].bg&&exp[i].fg===prev[i].fg,
+        `第 ${i+1} 层配色与预览一致`,`${JSON.stringify(prev[i])} vs ${JSON.stringify(exp[i])}`);
+    }
+  }
+
+
   console.log(`\n导出保真 ${pass + fail} 项，失败 ${fail}`);
   await b.close();
   process.exit(fail ? 1 : 0);

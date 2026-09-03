@@ -255,7 +255,20 @@
         const ce = parseInt(ghost.getAttribute('data-hint-end'), 10);
         const block = this.blockFor(ghost);
         if (block && Number.isFinite(line) && Number.isFinite(cs) && Number.isFinite(ce)) {
-          this.openPartial(block, { line, col: [cs, ce] }, { host: ghost, variant: 'cell' });
+          // Restore the real (merged) table first and edit the marker in an overlay
+          // pinned to where the ghost was. Keeping the un-merged skeleton on screen
+          // left the rest of the table in a half-expanded state, with the origin cell
+          // re-merging around the hole the editor punched in it.
+          const rect = ghost.getBoundingClientRect();
+          const host = this._hint ? this._hint.cell : ghost;
+          const anchorRect = {
+            width: rect.width, height: rect.height,
+            top: rect.top, left: rect.left,
+          };
+          this.clearCellHint();
+          this.openPartial(block, { line, col: [cs, ce] }, {
+            host, variant: 'cell', overlay: anchorRect, keepHost: true,
+          });
           return true;
         }
       }
@@ -281,8 +294,11 @@
         return true;
       }
 
+      // Only a click that actually lands on the title *text* renames it. Clicking the
+       // rest of the header row (padding, arrow, the gap after a short title) keeps
+       // the native <summary> behaviour and just expands/collapses the box.
       const titleEl = e.target.closest('.luogu-callout-title');
-      if (titleEl) {
+      if (titleEl && this.hitsText(titleEl, e)) {
         const details = titleEl.closest('details.luogu-callout');
         const spec = details && this.calloutTitleSpec(details, all);
         if (spec) {
@@ -392,6 +408,37 @@
     }
 
     /** Clicking a callout's icon cycles info -> success -> warning -> error. */
+    /**
+     * True when the pointer is over the element's rendered text, not its slack.
+     *
+     * An inline element's box can be wider than the glyphs inside it (a flex item
+     * that stretched, trailing whitespace, a wrapped last line), and treating the
+     * whole box as "the title" made clicks on empty header space open the rename
+     * editor instead of toggling the callout.
+     */
+    hitsText(el, e) {
+      if (typeof e.clientX !== 'number') return true;
+      // A synthetic click (el.click(), assistive tech, keyboard activation) reports
+      // 0,0 and carries no real pointer position — treat it as targeting the element.
+      if (e.clientX === 0 && e.clientY === 0 && !e.detail) return true;
+      const range = document.createRange();
+      let hit = false;
+      for (const node of Array.from(el.childNodes)) {
+        if (node.nodeType === 3) {
+          range.selectNodeContents(node);
+        } else if (node.nodeType === 1) {
+          range.selectNode(node);
+        } else continue;
+        for (const r of Array.from(range.getClientRects())) {
+          if (e.clientX >= r.left && e.clientX <= r.right
+            && e.clientY >= r.top && e.clientY <= r.bottom) { hit = true; break; }
+        }
+        if (hit) break;
+      }
+      range.detach && range.detach();
+      return hit;
+    }
+
     /**
      * Hovering a merged cell temporarily un-merges it.
      *
@@ -778,16 +825,30 @@
       // appears in the cell rather than above the whole table.
       const host = opts.host || block;
       const marker = document.createComment('typora-partial');
-      host.parentNode.insertBefore(marker, host);
-      host.parentNode.insertBefore(wrapper, host);
-      // A class, not an inline style: `.luogu-code-pre code` is `display:block
-      // !important`, so hiding a <pre> inline still left its highlighted code
-      // visible below the editor.
-      const prevDisplay = host.style.display;
-      host.classList.add('typora-hidden');
+      let prevDisplay = host.style.display;
+
+      if (opts.overlay) {
+        // Overlay mode: the document keeps its normal rendering and the editor floats
+        // over the clicked spot. Used for a marker inside a merged cell, where the
+        // surrounding table must stay merged while one position is edited.
+        wrapper.classList.add('typora-overlay');
+        const box = this.previewEl.getBoundingClientRect();
+        wrapper.style.top = `${opts.overlay.top - box.top + this.previewEl.scrollTop}px`;
+        wrapper.style.left = `${opts.overlay.left - box.left + this.previewEl.scrollLeft}px`;
+        wrapper.style.width = `${Math.max(opts.overlay.width, 48)}px`;
+        wrapper.style.height = `${opts.overlay.height}px`;
+        this.previewEl.appendChild(wrapper);
+      } else {
+        host.parentNode.insertBefore(marker, host);
+        host.parentNode.insertBefore(wrapper, host);
+        // A class, not an inline style: `.luogu-code-pre code` is `display:block
+        // !important`, so hiding a <pre> inline still left its highlighted code
+        // visible below the editor.
+        host.classList.add('typora-hidden');
+      }
 
       this.openBlock = {
-        wrapper, textarea: ta, block: host, marker, range,
+        wrapper, textarea: ta, block: opts.keepHost ? null : host, marker, range,
         partial: true, prevDisplay,
       };
 
