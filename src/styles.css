@@ -2066,6 +2066,50 @@ code[class*="language-"] {
      honour it, and then the PAGE itself must be dark as well — otherwise dark code
      blocks and callouts float on white paper, which looks broken and wastes toner.
      Prism's own dark palette is already correct here, so tokens are left alone. */
+  /* Tables in dark PDF. The generic .luogu-table rules are themed for the screen,
+     so a tuack/three table kept its light-theme rules (#d4e6f1 borders, white cell
+     backgrounds) on the dark page and came out nearly invisible. */
+  .print-dark .luogu-table,
+  .print-dark .luogu-tuack-table,
+  .print-dark .luogu-three-table {
+    background: transparent !important;
+    color: #d4d4d4 !important;
+  }
+
+  .print-dark .luogu-table th,
+  .print-dark .luogu-table td {
+    border-color: #4b5563 !important;
+    color: #d4d4d4 !important;
+  }
+
+  .print-dark .luogu-table tr:nth-child(even) td {
+    background: rgba(255, 255, 255, 0.04) !important;
+  }
+
+  .print-dark .luogu-tuack-table th,
+  .print-dark .luogu-three-table thead th {
+    background: transparent !important;
+    color: #f3f4f6 !important;
+  }
+
+  /* The rules that define these two styles must stay visible: tuack's row lines and
+     column divider, and the three-line table's three horizontal rules. */
+  .print-dark .luogu-tuack-table th,
+  .print-dark .luogu-tuack-table td {
+    border-top-color: #9ca3af !important;
+    border-bottom-color: #9ca3af !important;
+  }
+
+  .print-dark table.luogu-tuack-table[data-tuack-col] th,
+  .print-dark table.luogu-tuack-table[data-tuack-col] td {
+    border-left-color: #d4d4d4 !important;
+  }
+
+  .print-dark table.luogu-three-table th,
+  .print-dark table.luogu-three-table td {
+    border-color: #d4d4d4 !important;
+  }
+
   .print-dark .luogu-code-block-wrapper {
     color: #abb2bf !important;
   }

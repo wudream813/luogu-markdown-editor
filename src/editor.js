@@ -2037,21 +2037,23 @@ const safeStorage = {
       // standalone build inlines everything, but the hosted (multi-file) site serves
       // styles.css via <link>; scanning only <style> there produced an export with no
       // KaTeX fonts and no Prism colours at all.
+      // Rule-level, not sheet-level: the hosted site keeps KaTeX/Prism rules in the
+      // same styles.css as the app shell, and copying whole sheets dragged in
+      // `html, body { overflow: hidden; height: 100% }` — which left the exported
+      // article unscrollable.
       const allCss = collectDocumentCss();
-      // Fonts must travel as data: URIs, otherwise the exported file only renders
-      // maths while it can still reach the original site.
       const katexCss = await inlineCssFonts(
-        allCss
-          .filter(css => /@font-face\s*\{[^}]*font-family:\s*KaTeX_/i.test(css))
-          .join('\n'),
+        pickRules(allCss, (sel, text) => /@font-face/i.test(text)
+          ? /font-family:\s*KaTeX_/i.test(text)
+          : /(?:^|[\s,>+~(])\.katex/i.test(sel)),
       );
 
       // Harvest the inlined Prism theme the same way. Previously the export linked
       // the jsDelivr CDN stylesheet, so an "offline export" silently lost all code
       // highlighting without a network connection.
-      const prismCss = allCss
-        .filter(css => /\.token\.(?:comment|keyword|string)/.test(css))
-        .join('\n');
+      const prismCss = pickRules(allCss, (sel) => /\.token\b/.test(sel)
+        || /\.line-numbers/.test(sel)
+        || /(?:^|[\s,>+~(])(?:pre|code)\[class\*=/.test(sel));
 
       const fullHtml = `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
@@ -2088,6 +2090,9 @@ const safeStorage = {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      /* Match the preview pane's base size. KaTeX sizes itself in em (1.21em), so a
+         16px body silently rendered every formula larger than the editor showed. */
+      font-size: 14px;
       line-height: 1.8;
       color: var(--text);
       background-color: var(--bg);
@@ -2351,7 +2356,6 @@ const safeStorage = {
     .luogu-align-right { text-align: right; margin: 1.2em 0; }
     /* KaTeX sizing uses the inlined 0.18.4 stylesheet (class .katex-sizing.reset-size6.sizeN);
        only keep the display/base font tweaks for the exported theme. */
-    .katex { font: normal 1.21em KaTeX_Main, "Times New Roman", serif; line-height: 1.2; }
     .katex-display { display: block; margin: 1em 0; text-align: center; }
     .luogu-math-display { text-align: center; margin: 1.2em 0; overflow-x: auto; }
     /* Lists & Tasks */
@@ -2640,6 +2644,44 @@ const safeStorage = {
       if (t && !out.includes(t)) out.push(t);
     }
     return out;
+  }
+
+  /**
+   * Keep only the rules whose selector (or @font-face body) passes `want`.
+   *
+   * Splitting on rule boundaries rather than filtering whole stylesheets keeps the
+   * export free of the editor's layout CSS while still carrying the maths fonts and
+   * syntax colours it genuinely needs.
+   */
+  function pickRules(cssList, want) {
+    const kept = [];
+    for (const css of cssList) {
+      if (!css) continue;
+      let depth = 0;
+      let start = 0;
+      for (let i = 0; i < css.length; i++) {
+        const ch = css[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            const rule = css.slice(start, i + 1).trim();
+            const sel = rule.slice(0, rule.indexOf('{')).trim();
+            // Preserve at-rules that wrap other rules (@media, @supports) only when
+            // something inside them is wanted.
+            if (/^@(?:media|supports|layer)/i.test(sel)) {
+              const inner = rule.slice(rule.indexOf('{') + 1, -1);
+              const sub = pickRules([inner], want);
+              if (sub.trim()) kept.push(`${sel} { ${sub} }`);
+            } else if (want(sel, rule)) {
+              kept.push(rule);
+            }
+            start = i + 1;
+          }
+        }
+      }
+    }
+    return kept.join('\n');
   }
 
   /**

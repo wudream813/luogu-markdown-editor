@@ -105,6 +105,27 @@ const SNAP = `(function(root){
   ck(exp.tokenTotal === prev.tokenTotal, '高亮 token 数一致', `${prev.tokenTotal} vs ${exp.tokenTotal}`);
   ck(exp.tableCount === prev.tableCount, '表格数一致');
 
+  // 页面必须可滚动：曾因导出内联了编辑器外壳的 html,body{overflow:hidden;height:100%}
+  // 导致长文档卡在首屏。
+  const scroll = await q.evaluate(() => {
+    const de = document.documentElement;
+    return { ov: getComputedStyle(de).overflow, bov: getComputedStyle(document.body).overflow };
+  });
+  ck(scroll.ov !== 'hidden' && scroll.bov !== 'hidden', '导出页面未锁定 overflow',
+    JSON.stringify(scroll));
+
+  const tall = await q.evaluate(() => {
+    const d = document.createElement('div');
+    d.style.height = '3000px';
+    document.body.appendChild(d);
+    window.scrollTo(0, 400);
+    const y = window.scrollY || document.documentElement.scrollTop;
+    d.remove();
+    window.scrollTo(0, 0);
+    return y;
+  });
+  ck(tall > 0, '导出页面可以滚动', `scrollY=${tall}`);
+
   for (const k of Object.keys(prev.tokens)) {
     if (prev.tokens[k] === null) continue;
     ck(exp.tokens[k] === prev.tokens[k], `token 配色一致: ${k}`, `${prev.tokens[k]} vs ${exp.tokens[k]}`);

@@ -446,6 +446,74 @@ const path=require('path');
     ck(tk&&parseFloat(tk.bl)>=2,'{tuack=N} 该列竖线加粗',JSON.stringify(tk&&tk.bl));
   }
 
+  // ---- 要求 35: 点击临时解除的格子只编辑该格 -----------------------------------
+  {
+    const TBL='| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
+    await setSrc(TBL);await p.waitForTimeout(320);
+    const cb=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')].find(x=>x.textContent.trim()==='A');
+      const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.move(cb.x,cb.y);await p.waitForTimeout(280);
+    const mk=await p.evaluate(()=>{const t=[...document.querySelectorAll('.typora-unmerged-cell')]
+      .find(x=>x.textContent.trim()==='<');if(!t)return null;
+      const r=t.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    ck(!!mk,'临时格中存在 < 标记');
+    if(mk){
+      await p.mouse.click(mk.x,mk.y);await p.waitForTimeout(300);
+      const v=await box();
+      ck(!!v&&v.trim()==='<','点 < 只编辑该格',JSON.stringify(v));
+      ck(!!v&&!v.includes('\n'),'不是整块表格');
+      await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');
+        t.value=' X ';t.dispatchEvent(new Event('input',{bubbles:true}));t.blur();});
+      await p.waitForTimeout(320);
+      const s2=await src();
+      ck(s2.includes('| A | X | 1 |'),'写回仅改该格',JSON.stringify(s2));
+      ck(s2.split('\n').length===4,'未增删表行');
+    }
+  }
+
+  // ---- 要求 35: :::align / :::epigraph 内文可单独编辑 ---------------------------
+  {
+    await setSrc(':::align{center}\n居中的文字。\n:::');await p.waitForTimeout(320);
+    await p.evaluate(()=>document.querySelector('#previewContent [class*="luogu-align-"] p').click());
+    await p.waitForTimeout(280);
+    ck((await box())==='居中的文字。','点 align 内文字只编辑该段',JSON.stringify(await box()));
+    await p.evaluate(()=>{const t=document.querySelector('.typora-block-input');
+      t.value='改后文字。';t.dispatchEvent(new Event('input',{bubbles:true}));t.blur();});
+    await p.waitForTimeout(320);
+    const as=await src();
+    ck(as.includes(':::align{center}')&&as.includes('改后文字。')&&as.trim().endsWith(':::'),
+      'align 容器结构保持完整',JSON.stringify(as));
+
+    await setSrc(':::epigraph[——otto]\n名言内容。\n:::');await p.waitForTimeout(320);
+    await p.evaluate(()=>document.querySelector('#previewContent .luogu-epigraph-body p').click());
+    await p.waitForTimeout(280);
+    ck((await box())==='名言内容。','点 epigraph 内文字只编辑该段',JSON.stringify(await box()));
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(250);
+  }
+
+  // ---- 要求 35: 点折叠框图标不改变开合状态 --------------------------------------
+  {
+    await setSrc(':::info[标题]\n内容。\n:::');await p.waitForTimeout(320);
+    const o0=await p.evaluate(()=>document.querySelector('details.luogu-callout').open);
+    await p.evaluate(()=>document.querySelector('.luogu-callout-icon').click());
+    await p.waitForTimeout(260);
+    const st=await p.evaluate(()=>({open:document.querySelector('details.luogu-callout').open,
+      menu:!!document.querySelector('.typora-type-menu')}));
+    ck(st.open===o0,'点图标不切换折叠状态',`${o0} -> ${st.open}`);
+    ck(st.menu,'仍然弹出类别菜单');
+    await p.keyboard.press('Escape');await p.waitForTimeout(200);
+
+    await setSrc(':::info[标题]{open}\n内容。\n:::');await p.waitForTimeout(320);
+    const p0=await p.evaluate(()=>document.querySelector('details.luogu-callout').open);
+    await p.evaluate(()=>document.querySelector('.luogu-callout-icon').click());
+    await p.waitForTimeout(260);
+    ck(await p.evaluate(()=>document.querySelector('details.luogu-callout').open)===p0,
+      '展开态点图标也不收起');
+    await p.keyboard.press('Escape');await p.waitForTimeout(200);
+  }
+
+
 
   console.log(`\nTypora ${pass+fail} 项，失败 ${fail}`);
   await b.close();process.exit(fail?1:0);

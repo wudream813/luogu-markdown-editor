@@ -896,15 +896,21 @@
         const alignMode = (param || 'center').toLowerCase();
         // startLine + 1: innerLines begin on the line after the ::: opener.
         const innerHtml = this.parseBlocks(innerLines, startLine >= 0 ? startLine + 1 : 0);
-        return `<div class="luogu-align-${alignMode}">${innerHtml}</div>`;
+        // Typora mode needs the container's own span to bound the blocks inside it;
+        // without data-src-end-line the last child would swallow the closing `:::`.
+        const alignAttrs = (startLine >= 0 ? ` data-src-line="${startLine}"` : '')
+          + (endLine >= 0 ? ` data-src-end-line="${endLine}"` : '');
+        return `<div class="luogu-align-${alignMode}"${alignAttrs}>${innerHtml}</div>`;
       }
 
       // Epigraph block
       if (type === 'epigraph') {
         const innerHtml = this.parseBlocks(innerLines, startLine >= 0 ? startLine + 1 : 0);
+        const epiAttrs = (startLine >= 0 ? ` data-src-line="${startLine}"` : '')
+          + (endLine >= 0 ? ` data-src-end-line="${endLine}"` : '');
         const authorHtml = title ? `<div class="luogu-epigraph-author">${this.renderInline(title)}</div>` : '';
         return `
-          <div class="luogu-epigraph">
+          <div class="luogu-epigraph"${epiAttrs}>
             <div class="luogu-epigraph-quote-mark">“</div>
             <div class="luogu-epigraph-body">${innerHtml}</div>
             ${authorHtml}

@@ -25,6 +25,13 @@
   // a list of what we refuse to edit rather than what we accept.
   const NON_EDITABLE = new Set(['HR']);
 
+  // Container bodies whose children are independent, individually editable blocks.
+  // `align` renders as .luogu-align-{left,center,right} and epigraph as
+  // .luogu-epigraph-body; without these the inner paragraph resolved to the whole
+  // container, so clicking the text opened `:::align{center}` and hid the content.
+  const CONTAINER_BODY_RE = /(?:^|\s)(?:luogu-align-(?:left|center|right)|luogu-epigraph-body)(?:\s|$)/;
+  const CONTAINER_HOST_SEL = 'details.luogu-callout, [class*="luogu-align-"], .luogu-epigraph';
+
   class LuoguTypora {
     constructor(editor) {
       this.editor = editor;          // the LuoguEditor instance
@@ -93,14 +100,17 @@
       // the page-wide anchor list: the container's own closing `:::` is not an anchor,
       // so a global scan would let the block run past the end of its container.
       const parent = el.parentElement;
-      if (parent && parent.classList && parent.classList.contains('luogu-callout-content')) {
+      const inContainer = parent && parent.classList
+        && (parent.classList.contains('luogu-callout-content')
+          || CONTAINER_BODY_RE.test(parent.className || ''));
+      if (inContainer) {
         for (let sib = el.nextElementSibling; sib; sib = sib.nextElementSibling) {
           const s = parseInt(sib.getAttribute('data-src-line'), 10);
           if (Number.isFinite(s) && s > start) { next = s; break; }
         }
         if (next === all.length) {
           // Last block in the container: stop before the container's closing fence.
-          const host = el.closest('details.luogu-callout, .luogu-align, .luogu-epigraph');
+          const host = el.closest(CONTAINER_HOST_SEL);
           const hostEnd = host && parseInt(host.getAttribute('data-src-end-line'), 10);
           if (Number.isFinite(hostEnd)) next = hostEnd;
         }
@@ -143,7 +153,8 @@
           if (!innermost) innermost = el;
           outermost = el;
         }
-        if (el.classList && el.classList.contains('luogu-callout-content')) {
+        if (el.classList && (el.classList.contains('luogu-callout-content')
+          || CONTAINER_BODY_RE.test(el.className || ''))) {
           sawContainer = true;
         }
         el = el.parentElement;
@@ -232,6 +243,23 @@
       }
 
       // ---- table: edit a single cell ----------------------------------------------
+      // A cell revealed by the hover un-merge carries its own source coordinates, so
+      // clicking a `<` / `^` marker edits just that position instead of falling
+      // through to the generic path and opening the whole table.
+      const ghost = e.target.closest
+        ? e.target.closest('.typora-unmerged-cell[data-hint-line]')
+        : null;
+      if (ghost) {
+        const line = parseInt(ghost.getAttribute('data-hint-line'), 10);
+        const cs = parseInt(ghost.getAttribute('data-hint-start'), 10);
+        const ce = parseInt(ghost.getAttribute('data-hint-end'), 10);
+        const block = this.blockFor(ghost);
+        if (block && Number.isFinite(line) && Number.isFinite(cs) && Number.isFinite(ce)) {
+          this.openPartial(block, { line, col: [cs, ce] }, { host: ghost, variant: 'cell' });
+          return true;
+        }
+      }
+
       const cell = e.target.closest('td[data-cell-col], th[data-cell-col]');
       if (cell) {
         const block = this.blockFor(cell);
@@ -245,7 +273,13 @@
 
       // ---- callout: title text, type icon, and inner content are separate ---------
       const icon = e.target.closest('.luogu-callout-icon');
-      if (icon) { this.openCalloutMenu(icon, all); return true; }
+      if (icon) {
+        // The icon lives inside <summary>, whose default action toggles the
+        // <details>. Opening a type menu should not also collapse/expand the box.
+        e.preventDefault();
+        this.openCalloutMenu(icon, all);
+        return true;
+      }
 
       const titleEl = e.target.closest('.luogu-callout-title');
       if (titleEl) {
@@ -392,8 +426,11 @@
       if (!spec || !Array.isArray(spec.rect)) return;
 
       // Source text for every position the merge covers, one array per visual row.
+      // Each revealed position keeps the exact source slice it came from, so a click
+      // can edit that single cell without re-deriving coordinates from the DOM (which
+      // is mid-surgery at that point).
       const grid = spec.rect.map((part) => this.splitHintRow(
-        (all[part.line] || '').slice(part.col[0], part.col[1]), colspan,
+        (all[part.line] || '').slice(part.col[0], part.col[1]), colspan, part,
       ));
       if (!grid.length) return;
 
@@ -405,17 +442,22 @@
       }
 
       const added = [];
-      const make = (text) => {
+      const make = (piece) => {
         const td = document.createElement(cell.tagName.toLowerCase());
         td.className = 'typora-unmerged-cell';
-        td.textContent = text;
+        td.textContent = piece ? piece.text : '';
+        if (piece && Number.isFinite(piece.line)) {
+          td.setAttribute('data-hint-line', String(piece.line));
+          td.setAttribute('data-hint-start', String(piece.start));
+          td.setAttribute('data-hint-end', String(piece.end));
+        }
         return td;
       };
 
       // First row: the origin cell keeps its own text, the rest of its columns
       // reappear immediately after it.
       for (let c = colspan - 1; c >= 1; c--) {
-        const td = make((grid[0] && grid[0][c]) || '');
+        const td = make(grid[0] && grid[0][c]);
         row.insertBefore(td, cell.nextSibling);
         added.push(td);
       }
@@ -430,7 +472,7 @@
           return Number.isFinite(n) && n > col;
         }) || null;
         for (let c = 0; c < colspan; c++) {
-          const td = make((grid[k] && grid[k][c]) || '');
+          const td = make(grid[k] && grid[k][c]);
           tr.insertBefore(td, before);
           added.push(td);
         }
@@ -457,18 +499,37 @@
       this.clearCellHint();
     }
 
-    /** Split one source row of a merged cell into `count` trimmed column pieces. */
-    splitHintRow(raw, count) {
-      const parts = [];
+    /**
+     * Split one source row of a merged cell into `count` column pieces.
+     *
+     * Each piece carries the absolute source offsets it occupies, so clicking a
+     * revealed marker can rewrite exactly that slice. Offsets are relative to
+     * `part.col[0]`, the start of the merged region on that line.
+     */
+    splitHintRow(raw, count, part) {
+      const base = part ? part.col[0] : 0;
+      const line = part ? part.line : NaN;
+      const pieces = [];
       let buf = '';
+      let from = 0;
       for (let i = 0; i < raw.length; i++) {
         const ch = raw[i];
-        if (ch === '|' && raw[i - 1] !== '\\') { parts.push(buf); buf = ''; continue; }
+        if (ch === '|' && raw[i - 1] !== '\\') {
+          pieces.push({ text: buf, from, to: i });
+          buf = ''; from = i + 1;
+          continue;
+        }
         buf += ch;
       }
-      parts.push(buf);
-      const out = parts.map((x) => x.trim());
-      while (out.length < count) out.push('');
+      pieces.push({ text: buf, from, to: raw.length });
+
+      const out = pieces.map((x) => ({
+        text: x.text.trim(),
+        line,
+        start: base + x.from,
+        end: base + x.to,
+      }));
+      while (out.length < count) out.push({ text: '', line: NaN, start: 0, end: 0 });
       return out.slice(0, count);
     }
 
@@ -659,7 +720,12 @@
      * row — is preserved untouched rather than being re-serialised from the DOM.
      */
     openPartial(block, spec, opts = {}) {
-      this.clearCellHint();
+      // Not clearCellHint() unconditionally: when the host *is* one of the revealed
+      // cells, tearing the hint down here would delete the element we are about to
+      // anchor the editor to.
+      if (!(opts.host && this._hint && this._hint.added.includes(opts.host))) {
+        this.clearCellHint();
+      }
       this.commit();
 
       const all = this.lines();
@@ -801,7 +867,10 @@
           ? (all[open.range.start] || '').slice(col[0], col[1])
           : (open.inserting ? '' : all.slice(open.range.start, open.range.end + 1).join('\n'));
 
-      // Clean up the DOM swap regardless of whether anything changed.
+      // Clean up the DOM swap regardless of whether anything changed. A hint that is
+      // still standing (the editor was hosted by one of its revealed cells) must go
+      // too, otherwise the un-merged skeleton would outlive the edit.
+      this.clearCellHint();
       if (open.wrapper.parentNode) open.wrapper.parentNode.removeChild(open.wrapper);
       if (open.marker.parentNode) open.marker.parentNode.removeChild(open.marker);
       if (open.block) {
