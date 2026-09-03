@@ -391,6 +391,47 @@ const path=require('path');
     ck((await box()).trim() === '1', '普通格仍只编辑自身');
   }
 
+  // ---- 要求 33: 合并格 hover 显示原始标记（格子对齐、无竖线）--------------------
+  {
+    const TBL='| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
+    await setSrc(TBL);await p.waitForTimeout(320);
+    const cb=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')].find(x=>x.textContent.trim()==='A');
+      const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.move(cb.x,cb.y);await p.waitForTimeout(280);
+    const hint=await p.evaluate(()=>{const h=document.querySelector('.typora-cell-hint');
+      if(!h)return null;return {items:[...h.querySelectorAll('.typora-cell-hint-item')].map(x=>x.textContent),
+        pipe:h.textContent.includes('|')};});
+    ck(!!hint,'合并格 hover 显示标记预览');
+    ck(hint&&hint.items.join(',')==='A,<,^,^','预览为 A < ^ ^ 四格',JSON.stringify(hint&&hint.items));
+    ck(hint&&!hint.pipe,'预览不含竖线字符');
+    await p.mouse.move(5,400);await p.waitForTimeout(260);
+    ck(await p.evaluate(()=>!document.querySelector('.typora-cell-hint')),'移开后清除预览');
+    ck((await src())===TBL,'hover 预览不污染源码');
+  }
+
+  // ---- 要求 33: cute-table 样式 ------------------------------------------------
+  {
+    const tblSrc='\n\n| 甲 | 乙 |\n|:--:|:--:|\n| 1 | 2 |';
+    await setSrc('::cute-table{three}'+tblSrc);await p.waitForTimeout(320);
+    const three=await p.evaluate(()=>{const t=document.querySelector('#previewContent table');
+      if(!t)return null;const th=t.querySelector('th'),td=t.querySelector('td');
+      return {cls:t.className,thTop:getComputedStyle(th).borderTopWidth,
+        thBottom:getComputedStyle(th).borderBottomWidth,tdLeft:getComputedStyle(td).borderLeftWidth};});
+    ck(three&&/luogu-three-table/.test(three.cls),'{three} 使用三线表类',JSON.stringify(three&&three.cls));
+    ck(three&&three.tdLeft==='0px','三线表无竖线',JSON.stringify(three&&three.tdLeft));
+    ck(three&&parseFloat(three.thTop)>=2,'三线表顶线加粗',JSON.stringify(three&&three.thTop));
+
+    await setSrc('::cute-table{tuack=2}'+tblSrc);await p.waitForTimeout(320);
+    const tk=await p.evaluate(()=>{const t=document.querySelector('#previewContent table');
+      const td=t&&t.querySelector('tbody td:nth-child(2)');
+      return {cls:t?t.className:null,attr:t?t.getAttribute('data-tuack-col'):null,
+        bl:td?getComputedStyle(td).borderLeftWidth:null};});
+    ck(tk&&/luogu-tuack-table/.test(tk.cls),'{tuack=N} 使用 tuack 类');
+    ck(tk&&tk.attr==='2','{tuack=N} 记录分栏列号',JSON.stringify(tk&&tk.attr));
+    ck(tk&&parseFloat(tk.bl)>=2,'{tuack=N} 该列竖线加粗',JSON.stringify(tk&&tk.bl));
+  }
+
+
   console.log(`\nTypora ${pass+fail} 项，失败 ${fail}`);
   await b.close();process.exit(fail?1:0);
 })();

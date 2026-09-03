@@ -32,6 +32,9 @@
       this.openBlock = null;         // { wrapper, textarea, startLine, endLine, marker }
       this._onClick = this._onClick.bind(this);
       this._onKeyDown = this._onKeyDown.bind(this);
+      this._onOver = this._onOver.bind(this);
+      this._onOut = this._onOut.bind(this);
+      this._hintCell = null;
     }
 
     get previewEl() { return this.editor.previewEl; }
@@ -43,6 +46,8 @@
       this.previewEl.classList.add('typora-mode');
       this.previewEl.addEventListener('click', this._onClick);
       this.previewEl.addEventListener('keydown', this._onKeyDown, true);
+      this.previewEl.addEventListener('mouseover', this._onOver);
+      this.previewEl.addEventListener('mouseout', this._onOut);
       this.previewEl.setAttribute('tabindex', '0');
     }
 
@@ -54,6 +59,9 @@
       this.previewEl.classList.remove('typora-mode');
       this.previewEl.removeEventListener('click', this._onClick);
       this.previewEl.removeEventListener('keydown', this._onKeyDown, true);
+      this.previewEl.removeEventListener('mouseover', this._onOver);
+      this.previewEl.removeEventListener('mouseout', this._onOut);
+      this.clearCellHint();
       this.previewEl.removeAttribute('tabindex');
     }
 
@@ -351,6 +359,86 @@
 
     /** Clicking a callout's icon cycles info -> success -> warning -> error. */
     /**
+     * Hovering a merged cell previews the raw markers that produced the merge.
+     *
+     * The rendered table shows one big box, so there is no way to tell from the
+     * preview whether a merge came from `<`, `^`, or both, nor how far it reaches.
+     * On hover the cell is temporarily replaced by its source rectangle, laid out on
+     * a grid so the markers line up in columns without printing literal pipes.
+     */
+    _onOver(e) {
+      if (!this.active || this.openBlock) return;
+      const cell = e.target && e.target.closest
+        ? e.target.closest('td[data-cell-col], th[data-cell-col]')
+        : null;
+      if (!cell || cell === this._hintCell) return;
+      this.clearCellHint();
+
+      const rowspan = parseInt(cell.getAttribute('rowspan'), 10) || 1;
+      const colspan = parseInt(cell.getAttribute('colspan'), 10) || 1;
+      if (rowspan <= 1 && colspan <= 1) return;   // plain cell: nothing to reveal
+
+      const all = this.lines();
+      const block = this.blockFor(cell);
+      const range = block && this.rangeOf(block, this.anchorList());
+      const spec = range && this.cellSpec(cell, range, all);
+      if (!spec || !Array.isArray(spec.rect)) return;
+
+      // Build a grid: one row per source line, one column per table column, so the
+      // markers align the way they do in the source without drawing pipes.
+      const grid = document.createElement('div');
+      grid.className = 'typora-cell-hint';
+      grid.style.gridTemplateColumns = `repeat(${colspan}, auto)`;
+      for (const part of spec.rect) {
+        const raw = (all[part.line] || '').slice(part.col[0], part.col[1]);
+        for (const piece of this.splitHintRow(raw, colspan)) {
+          const box = document.createElement('span');
+          box.className = 'typora-cell-hint-item';
+          box.textContent = piece;
+          grid.appendChild(box);
+        }
+      }
+
+      this._hintCell = cell;
+      this._hintPrev = cell.innerHTML;
+      cell.classList.add('typora-cell-hinted');
+      cell.innerHTML = '';
+      cell.appendChild(grid);
+    }
+
+    _onOut(e) {
+      if (!this._hintCell) return;
+      // Ignore moves between descendants of the same cell.
+      const to = e.relatedTarget;
+      if (to && this._hintCell.contains(to)) return;
+      this.clearCellHint();
+    }
+
+    /** Split one source row of a merged cell into `count` trimmed column pieces. */
+    splitHintRow(raw, count) {
+      const parts = [];
+      let buf = '';
+      for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i];
+        if (ch === '|' && raw[i - 1] !== '\\') { parts.push(buf); buf = ''; continue; }
+        buf += ch;
+      }
+      parts.push(buf);
+      const out = parts.map((x) => x.trim());
+      while (out.length < count) out.push('');
+      return out.slice(0, count);
+    }
+
+    clearCellHint() {
+      const cell = this._hintCell;
+      if (!cell) return;
+      this._hintCell = null;
+      cell.classList.remove('typora-cell-hinted');
+      if (typeof this._hintPrev === 'string') cell.innerHTML = this._hintPrev;
+      this._hintPrev = null;
+    }
+
+    /**
      * Clicking a callout's icon opens a small menu to pick its type.
      *
      * A cycling click was tried first, but with four types it takes up to three
@@ -526,6 +614,7 @@
      * row — is preserved untouched rather than being re-serialised from the DOM.
      */
     openPartial(block, spec, opts = {}) {
+      this.clearCellHint();
       this.commit();
 
       const all = this.lines();

@@ -2178,7 +2178,7 @@ const safeStorage = {
       color: var(--text-muted);
     }
     .luogu-inline-code {
-      font-family: Consolas, Monaco, "Cascadia Code", monospace;
+      font-family: "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace;
       font-size: 0.88em;
       padding: 2px 6px;
       background: rgba(0, 0, 0, 0.06);
@@ -2238,7 +2238,7 @@ const safeStorage = {
     .luogu-code-pre {
       margin: 0;
       padding: 14px 0;
-      font-family: Consolas, Monaco, "Cascadia Code", monospace;
+      font-family: "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace;
       font-size: 13px;
       line-height: 1.6;
       /* Each .code-line is its own horizontal scroll container, so the <pre>
@@ -2348,7 +2348,7 @@ const safeStorage = {
     .luogu-align-right { text-align: right; margin: 1.2em 0; }
     /* KaTeX sizing uses the inlined 0.18.4 stylesheet (class .katex-sizing.reset-size6.sizeN);
        only keep the display/base font tweaks for the exported theme. */
-    .katex { font: normal 1.15em KaTeX_Main, "Times New Roman", serif; line-height: 1.2; }
+    .katex { font: normal 1.21em KaTeX_Main, "Times New Roman", serif; line-height: 1.2; }
     .katex-display { display: block; margin: 1em 0; text-align: center; }
     .luogu-math-display { text-align: center; margin: 1.2em 0; overflow-x: auto; }
     /* Lists & Tasks */

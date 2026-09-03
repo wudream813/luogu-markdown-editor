@@ -672,6 +672,8 @@
           <tr><td>居中表格</td><td><code>::cute-table</code></td><td>不加参数时默认将紧随的表格居中展示</td></tr>
           <tr><td>Tuack 竞赛表格</td><td><code>::cute-table{tuack}</code></td><td>竞赛风格美化表格（经典蓝白网格与悬停效果）</td></tr>
           <tr><td>居中/居右排版</td><td><code>:::align{center}</code> / <code>:::align{right}</code></td><td>将内部文本、图片、公式进行居中或居右排版</td></tr>
+          <tr><td>三线表</td><td><code>::cute-table{three}</code> + 表格</td><td>仅保留顶线、表头线、底线的学术风格表格</td></tr>
+          <tr><td>Tuack 表格</td><td><code>::cute-table{tuack}</code> / <code>{tuack=3}</code></td><td>竞赛风格表格；<code>=N</code> 在第 N 列加粗竖线分栏</td></tr>
           <tr><td>引言展示</td><td><code>:::epigraph[落款]</code> ... <code>:::</code></td><td>优雅的名言展示块（带引号图标与右对齐作者）</td></tr>
           <tr><td>B站视频嵌入</td><td><code>![](bilibili:BV号)</code></td><td>嵌入高清 Bilibili 视频播放器</td></tr>
           <tr><td>代码块特性</td><td><code>```cpp line-numbers lines=5-6</code></td><td>默认fallback到C++，支持行号 (<code>line-numbers</code>) 与高亮 (<code>lines=5-6</code>)</td></tr>
@@ -713,7 +715,7 @@
         <li><b>点击任意块</b>（段落、标题、列表、公式皆可）即展开它的 Markdown 源码就地编辑。</li>
         <li><b>代码块</b>：点代码区只编辑代码本身，<code>```</code> 围栏与语言标记不会暴露；框内 <code>Tab</code> / <code>Shift+Tab</code> 可增减缩进。</li>
         <li><b>表格</b>：点某个单元格只编辑那一格，其余单元格与对齐行原样保留。</li>
-        <li><b>合并单元格</b>：点用 <code>&lt;</code> / <code>^</code> 合并出来的大格子时，编辑框会按<b>原始标记</b>展开整片区域（如 <code>A |&lt;</code> 换行 <code>^ |^</code>），可直接改动合并关系；普通单元格仍只编辑自身。</li>
+        <li><b>合并单元格</b>：鼠标悬停在用 <code>&lt;</code> / <code>^</code> 合并出的大格子上，会按格子对齐<b>显示原始标记</b>；点击后可直接改动合并关系，普通单元格仍只编辑自身。</li>
         <li><b>折叠框</b>：点标题文字改标题，点左侧图标弹出<b>类别菜单</b>（提示 / 成功 / 警告 / 错误，当前项打勾），点框内文字只改那一段。</li>
         <li><b>Bilibili 卡片</b>：点卡片可修改 BV 号与标题；播放按钮仍照常加载视频。</li>
         <li><b>点击块与块之间的空白处</b>（或空文档的正文区）可直接在该位置新起一段，前后会自动留出空行。</li>

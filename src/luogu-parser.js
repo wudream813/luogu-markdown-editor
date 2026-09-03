@@ -588,8 +588,14 @@
         const cuteTableMatch = line.trim().match(/^::cute-table(?:\{(.*?)\})?\s*$/i);
         if (cuteTableMatch) {
           const param = (cuteTableMatch[1] || '').trim().toLowerCase();
-          const isTuack = param === 'tuack' || param === 'trunk';
-          const isCenter = !isTuack; // default without {tuack} represents centered cute-table
+          // `tuack=N` additionally thickens the vertical rule before column N — used
+          // when a table holds two logical halves (e.g. two runs of test points).
+          const tuackAt = param.match(/^tuack\s*=\s*(\d+)$/);
+          const isTuack = param === 'tuack' || param === 'trunk' || !!tuackAt;
+          const tuackCol = tuackAt ? parseInt(tuackAt[1], 10) : 0;
+          // Booktabs-style三线表: horizontal rules only (top / under header / bottom).
+          const isThree = param === 'three';
+          const isCenter = !isTuack && !isThree;
 
           // Look ahead to find table
           i++;
@@ -600,7 +606,7 @@
               tableLines.push(lines[i]);
               i++;
             }
-            out.push(this.renderTable(tableLines, isTuack, isCenter));
+            out.push(this.renderTable(tableLines, isTuack, isCenter, { three: isThree, tuackCol }));
           }
           continue;
         }
@@ -1054,7 +1060,7 @@
     }
 
     // Render Luogu Tables with ^ (rowspan) and < (colspan) cell merging & cute-table
-    renderTable(tableLines, isCuteTable = false, isCentered = false) {
+    renderTable(tableLines, isCuteTable = false, isCentered = false, style = {}) {
       if (tableLines.length < 2) return '';
 
       const parsedRows = [];
@@ -1131,10 +1137,16 @@
         }
       }
 
-      const centerClass = isCentered ? ' luogu-table-center-wrapper' : '';
-      const tuackClass = isCuteTable ? ' luogu-tuack-table' : (isCentered ? ' luogu-cute-centered-table' : '');
+      const isThree = !!style.three;
+      const tuackCol = parseInt(style.tuackCol, 10) || 0;
+      const centerClass = (isCentered || isThree) ? ' luogu-table-center-wrapper' : '';
+      let tuackClass = isCuteTable ? ' luogu-tuack-table' : (isCentered ? ' luogu-cute-centered-table' : '');
+      if (isThree) tuackClass = ' luogu-three-table';
       let html = `<div class="luogu-table-wrapper${centerClass}">`;
-      html += `<table class="luogu-table${tuackClass}">`;
+      // `data-tuack-col` drives a thicker left border on that column via CSS, so the
+      // divider follows the column even when cells above it are merged.
+      const tuackAttr = (isCuteTable && tuackCol > 0) ? ` data-tuack-col="${tuackCol}"` : '';
+      html += `<table class="luogu-table${tuackClass}"${tuackAttr}>`;
 
       // Header
       //

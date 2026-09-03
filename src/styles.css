@@ -2454,6 +2454,80 @@ code[class*="language-"] {
    This must come last in the stylesheet — `.luogu-code-pre code` is also
    `display:block !important`, and between two !important declarations of equal
    specificity the later one wins. */
+/* ::cute-table{three} — booktabs 三线表: only three horizontal rules (top, under the
+   header, bottom) and no vertical rules at all. Selectors are qualified with the
+   table class so they outrank the generic `.luogu-table th/td` borders. */
+table.luogu-three-table {
+  border-collapse: collapse;
+  border: 0 !important;
+  background: transparent;
+  box-shadow: none;
+}
+
+table.luogu-three-table th,
+table.luogu-three-table td {
+  border: 0 !important;
+  background: transparent !important;
+  padding: 8px 18px;
+  text-align: center;
+}
+
+table.luogu-three-table thead th {
+  border-top: 2px solid var(--text-primary) !important;
+  border-bottom: 1px solid var(--text-primary) !important;
+  font-weight: 600;
+}
+
+table.luogu-three-table tbody tr:last-child td {
+  border-bottom: 2px solid var(--text-primary) !important;
+}
+
+/* ::cute-table{tuack=N} — thicker divider on the left edge of column N, marking the
+   boundary between two logical halves of the table. */
+table.luogu-tuack-table[data-tuack-col="2"] th:nth-child(2),
+table.luogu-tuack-table[data-tuack-col="2"] td:nth-child(2),
+table.luogu-tuack-table[data-tuack-col="3"] th:nth-child(3),
+table.luogu-tuack-table[data-tuack-col="3"] td:nth-child(3),
+table.luogu-tuack-table[data-tuack-col="4"] th:nth-child(4),
+table.luogu-tuack-table[data-tuack-col="4"] td:nth-child(4),
+table.luogu-tuack-table[data-tuack-col="5"] th:nth-child(5),
+table.luogu-tuack-table[data-tuack-col="5"] td:nth-child(5),
+table.luogu-tuack-table[data-tuack-col="6"] th:nth-child(6),
+table.luogu-tuack-table[data-tuack-col="6"] td:nth-child(6),
+table.luogu-tuack-table[data-tuack-col="7"] th:nth-child(7),
+table.luogu-tuack-table[data-tuack-col="7"] td:nth-child(7),
+table.luogu-tuack-table[data-tuack-col="8"] th:nth-child(8),
+table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
+  border-left: 2.5px solid var(--text-primary) !important;
+}
+
+/* Merged-cell hover preview: shows the raw `<` / `^` markers on a grid so the
+   columns line up without printing literal pipe characters. */
+.preview-content.typora-mode td.typora-cell-hinted,
+.preview-content.typora-mode th.typora-cell-hinted {
+  padding: 4px !important;
+  vertical-align: middle;
+}
+
+.typora-cell-hint {
+  display: grid;
+  gap: 2px 6px;
+  justify-content: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.88em;
+  line-height: 1.35;
+}
+
+.typora-cell-hint-item {
+  min-width: 1.2em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(52, 152, 219, 0.12);
+  color: var(--text-primary);
+  text-align: center;
+  white-space: pre;
+}
+
 .preview-content .typora-hidden,
 .preview-content .typora-hidden code,
 .preview-content .typora-hidden pre {
