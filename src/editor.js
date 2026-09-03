@@ -2033,22 +2033,25 @@ const safeStorage = {
       // document renders math identically to the preview and also works offline.
       // (The old CDN CSS was 0.16.11 and used different class names, e.g. .sizing
       // vs the 0.18.4 .katex-sizing — which broke \Huge sizing and the \ne glyph.)
-      const katexCss = (typeof document !== 'undefined')
-        ? Array.from(document.querySelectorAll('style'))
-            .map(s => s.textContent)
-            .filter(css => /@font-face\{[^}]*font-family:KaTeX_/i.test(css))
-            .join('\n')
-        : '';
+      // Collect CSS from BOTH inline <style> blocks and linked stylesheets. The
+      // standalone build inlines everything, but the hosted (multi-file) site serves
+      // styles.css via <link>; scanning only <style> there produced an export with no
+      // KaTeX fonts and no Prism colours at all.
+      const allCss = collectDocumentCss();
+      // Fonts must travel as data: URIs, otherwise the exported file only renders
+      // maths while it can still reach the original site.
+      const katexCss = await inlineCssFonts(
+        allCss
+          .filter(css => /@font-face\s*\{[^}]*font-family:\s*KaTeX_/i.test(css))
+          .join('\n'),
+      );
 
       // Harvest the inlined Prism theme the same way. Previously the export linked
       // the jsDelivr CDN stylesheet, so an "offline export" silently lost all code
       // highlighting without a network connection.
-      const prismCss = (typeof document !== 'undefined')
-        ? Array.from(document.querySelectorAll('style'))
-            .map(s => s.textContent)
-            .filter(css => /\.token\.(?:comment|keyword|string)/.test(css))
-            .join('\n')
-        : '';
+      const prismCss = allCss
+        .filter(css => /\.token\.(?:comment|keyword|string)/.test(css))
+        .join('\n');
 
       const fullHtml = `<!DOCTYPE html>
 <html lang="zh-CN" data-theme="light">
@@ -2601,6 +2604,103 @@ const safeStorage = {
   }
 
   // Helpers
+  /**
+   * Every stylesheet rule text available in the document, from inline <style> blocks
+   * *and* linked stylesheets.
+   *
+   * The standalone build inlines all CSS, so scanning <style> was enough there — but
+   * on the hosted multi-file site styles.css arrives via <link>, and the export
+   * silently shipped without KaTeX fonts or Prism colours. Reading cssRules also lets
+   * us rewrite relative url(...) references, which would otherwise 404 once the
+   * exported file is saved somewhere else.
+   */
+  function collectDocumentCss() {
+    if (typeof document === 'undefined') return [];
+    const out = [];
+    for (const sheet of Array.from(document.styleSheets || [])) {
+      let rules = null;
+      try {
+        rules = sheet.cssRules;
+      } catch (err) {
+        // Cross-origin stylesheet: unreadable by design. Fall back to the <style>
+        // element's own text when there is one.
+        rules = null;
+      }
+      if (rules) {
+        let text = Array.from(rules).map((r) => r.cssText).join('\n');
+        if (sheet.href) text = absolutizeCssUrls(text, sheet.href);
+        out.push(text);
+      } else if (sheet.ownerNode && sheet.ownerNode.textContent) {
+        out.push(sheet.ownerNode.textContent);
+      }
+    }
+    // Inline <style> nodes that never produced a CSSOM entry (e.g. media-disabled).
+    for (const node of Array.from(document.querySelectorAll('style'))) {
+      const t = node.textContent || '';
+      if (t && !out.includes(t)) out.push(t);
+    }
+    return out;
+  }
+
+  /**
+   * Replace every remote url(...) in `css` with a base64 data: URI.
+   *
+   * On the hosted site KaTeX's @font-face rules point at .woff2 files next to
+   * styles.css. Copying those rules verbatim into the export produced a file that
+   * looked right on the original machine but lost all maths glyphs once moved or
+   * opened offline.
+   */
+  async function inlineCssFonts(css) {
+    if (!css || typeof fetch !== 'function') return css;
+    const targets = new Set();
+    const re = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
+    let m;
+    while ((m = re.exec(css)) !== null) {
+      if (!/^(?:data:|blob:|#)/i.test(m[2])) targets.add(m[2]);
+    }
+    if (!targets.size) return css;
+
+    const map = new Map();
+    await Promise.all(Array.from(targets).map(async (url) => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const buf = await res.arrayBuffer();
+        // Chunked conversion: a single spread over a multi-hundred-KB font blows
+        // the argument limit.
+        const bytes = new Uint8Array(buf);
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        }
+        const ext = (url.split('?')[0].match(/\.([a-z0-9]+)$/i) || [, 'woff2'])[1].toLowerCase();
+        const mime = ext === 'woff2' ? 'font/woff2'
+          : ext === 'woff' ? 'font/woff'
+            : ext === 'ttf' ? 'font/ttf' : 'application/octet-stream';
+        map.set(url, `data:${mime};base64,${btoa(bin)}`);
+      } catch (err) {
+        // Unreachable font: keep the original URL rather than breaking the rule.
+      }
+    }));
+
+    return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (whole, q, target) => {
+      const hit = map.get(target);
+      return hit ? `url("${hit}")` : whole;
+    });
+  }
+
+  /** Resolve relative url(...) targets in a stylesheet against its own location. */
+  function absolutizeCssUrls(css, base) {
+    return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (m, quote, target) => {
+      if (/^(?:data:|https?:|blob:|#)/i.test(target)) return m;
+      try {
+        return `url("${new URL(target, base).href}")`;
+      } catch (err) {
+        return m;
+      }
+    });
+  }
+
   function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
