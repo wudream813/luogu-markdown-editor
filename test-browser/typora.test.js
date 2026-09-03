@@ -391,22 +391,37 @@ const path=require('path');
     ck((await box()).trim() === '1', '普通格仍只编辑自身');
   }
 
-  // ---- 要求 33: 合并格 hover 显示原始标记（格子对齐、无竖线）--------------------
+  // ---- 要求 34: 合并格 hover 临时解除合并 ---------------------------------------
   {
     const TBL='| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
     await setSrc(TBL);await p.waitForTimeout(320);
+    const shape=()=>p.evaluate(()=>[...document.querySelectorAll('#previewContent table tr')]
+      .map(r=>[...r.children].map(c=>c.textContent.trim()+(c.getAttribute('rowspan')||'')+(c.getAttribute('colspan')||''))));
+    const before=await shape();
+    ck(JSON.stringify(before[1])==='["A22","1"]','初始 A 为 2x2 合并格',JSON.stringify(before[1]));
     const cb=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')].find(x=>x.textContent.trim()==='A');
       const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
-    await p.mouse.move(cb.x,cb.y);await p.waitForTimeout(280);
-    const hint=await p.evaluate(()=>{const h=document.querySelector('.typora-cell-hint');
-      if(!h)return null;return {items:[...h.querySelectorAll('.typora-cell-hint-item')].map(x=>x.textContent),
-        pipe:h.textContent.includes('|')};});
-    ck(!!hint,'合并格 hover 显示标记预览');
-    ck(hint&&hint.items.join(',')==='A,<,^,^','预览为 A < ^ ^ 四格',JSON.stringify(hint&&hint.items));
-    ck(hint&&!hint.pipe,'预览不含竖线字符');
-    await p.mouse.move(5,400);await p.waitForTimeout(260);
-    ck(await p.evaluate(()=>!document.querySelector('.typora-cell-hint')),'移开后清除预览');
-    ck((await src())===TBL,'hover 预览不污染源码');
+    await p.mouse.move(cb.x,cb.y);await p.waitForTimeout(300);
+    const during=await shape();
+    ck(JSON.stringify(during[1])==='["A","<","1"]','hover 时第一行解除为 A < 1',JSON.stringify(during[1]));
+    ck(JSON.stringify(during[2])==='["^","^","2"]','hover 时第二行解除为 ^ ^ 2',JSON.stringify(during[2]));
+    ck(await p.evaluate(()=>document.querySelectorAll('.typora-unmerged-cell').length)===3,'新增 3 个临时格');
+    await p.mouse.move(5,420);await p.waitForTimeout(300);
+    ck(JSON.stringify(await shape())===JSON.stringify(before),'移开后完全还原');
+    ck((await src())===TBL,'hover 不改动源码');
+  }
+
+  // ---- 要求 34: 合并 span 计数（回归）------------------------------------------
+  {
+    await setSrc('| 甲 | 乙 | 丙 |\n|:-:|:-:|:-:|\n| A | < | 1 |\n| ^ | ^ | 2 |');
+    await p.waitForTimeout(300);
+    const sp=await p.evaluate(()=>{const t=document.querySelector('#previewContent td');
+      return t.getAttribute('rowspan')+'x'+t.getAttribute('colspan');});
+    ck(sp==='2x2','两行两列合并应为 rowspan=2（曾错算为 3）',sp);
+    await setSrc('| 甲 |\n|:-:|\n| A |\n| ^ |\n| ^ |');
+    await p.waitForTimeout(300);
+    ck(await p.evaluate(()=>document.querySelector('#previewContent td').getAttribute('rowspan'))==='3',
+      '三行纵向合并 rowspan=3');
   }
 
   // ---- 要求 33: cute-table 样式 ------------------------------------------------

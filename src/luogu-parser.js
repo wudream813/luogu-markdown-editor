@@ -1115,11 +1115,15 @@
           const cell = matrix[r][c];
           const text = cell.text.trim();
 
+          // A span only grows when the origin does not already reach this row/column.
+          // Without the guard, every `^` on a row that is itself part of a horizontal
+          // merge bumped the same origin again: `| A | < |` over `| ^ | ^ |` produced
+          // rowspan="3" for what is a two-row merge.
           if (text === '<') {
             if (c > 0) {
               const left = matrix[r][c - 1];
               const origin = matrix[left.originR][left.originC];
-              origin.colspan += 1;
+              if (origin.originC + origin.colspan - 1 < c) origin.colspan += 1;
               cell.isMerged = true;
               cell.originR = origin.originR;
               cell.originC = origin.originC;
@@ -1128,7 +1132,7 @@
             if (r > 0) {
               const above = matrix[r - 1][c];
               const origin = matrix[above.originR][above.originC];
-              origin.rowspan += 1;
+              if (origin.originR + origin.rowspan - 1 < r) origin.rowspan += 1;
               cell.isMerged = true;
               cell.originR = origin.originR;
               cell.originC = origin.originC;

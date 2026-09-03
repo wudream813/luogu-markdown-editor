@@ -34,7 +34,7 @@
       this._onKeyDown = this._onKeyDown.bind(this);
       this._onOver = this._onOver.bind(this);
       this._onOut = this._onOut.bind(this);
-      this._hintCell = null;
+      this._hint = null;
     }
 
     get previewEl() { return this.editor.previewEl; }
@@ -359,24 +359,31 @@
 
     /** Clicking a callout's icon cycles info -> success -> warning -> error. */
     /**
-     * Hovering a merged cell previews the raw markers that produced the merge.
+     * Hovering a merged cell temporarily un-merges it.
      *
-     * The rendered table shows one big box, so there is no way to tell from the
-     * preview whether a merge came from `<`, `^`, or both, nor how far it reaches.
-     * On hover the cell is temporarily replaced by its source rectangle, laid out on
-     * a grid so the markers line up in columns without printing literal pipes.
+     * The rendered table shows one big box, so there is no way to see how far a merge
+     * reaches or which markers produced it. On hover the cell drops back to 1x1 and
+     * the positions it had swallowed grow back as real cells showing their own source
+     * text (`<` / `^`) — the table briefly looks the way it would if the merge
+     * markers had no special meaning. Nothing is written to the document.
      */
     _onOver(e) {
       if (!this.active || this.openBlock) return;
       const cell = e.target && e.target.closest
         ? e.target.closest('td[data-cell-col], th[data-cell-col]')
         : null;
-      if (!cell || cell === this._hintCell) return;
+      if (!cell) return;
+      if (this._hint && this._hint.cell === cell) return;
       this.clearCellHint();
 
       const rowspan = parseInt(cell.getAttribute('rowspan'), 10) || 1;
       const colspan = parseInt(cell.getAttribute('colspan'), 10) || 1;
-      if (rowspan <= 1 && colspan <= 1) return;   // plain cell: nothing to reveal
+      if (rowspan <= 1 && colspan <= 1) return;   // plain cell: nothing to un-merge
+
+      const col = parseInt(cell.getAttribute('data-cell-col'), 10);
+      const row = cell.parentElement;
+      const table = cell.closest('table');
+      if (!Number.isFinite(col) || !row || !table) return;
 
       const all = this.lines();
       const block = this.blockFor(cell);
@@ -384,33 +391,69 @@
       const spec = range && this.cellSpec(cell, range, all);
       if (!spec || !Array.isArray(spec.rect)) return;
 
-      // Build a grid: one row per source line, one column per table column, so the
-      // markers align the way they do in the source without drawing pipes.
-      const grid = document.createElement('div');
-      grid.className = 'typora-cell-hint';
-      grid.style.gridTemplateColumns = `repeat(${colspan}, auto)`;
-      for (const part of spec.rect) {
-        const raw = (all[part.line] || '').slice(part.col[0], part.col[1]);
-        for (const piece of this.splitHintRow(raw, colspan)) {
-          const box = document.createElement('span');
-          box.className = 'typora-cell-hint-item';
-          box.textContent = piece;
-          grid.appendChild(box);
+      // Source text for every position the merge covers, one array per visual row.
+      const grid = spec.rect.map((part) => this.splitHintRow(
+        (all[part.line] || '').slice(part.col[0], part.col[1]), colspan,
+      ));
+      if (!grid.length) return;
+
+      const rows = [row];
+      for (let k = 1; k < rowspan; k++) {
+        const nxt = rows[rows.length - 1].nextElementSibling;
+        if (!nxt) break;
+        rows.push(nxt);
+      }
+
+      const added = [];
+      const make = (text) => {
+        const td = document.createElement(cell.tagName.toLowerCase());
+        td.className = 'typora-unmerged-cell';
+        td.textContent = text;
+        return td;
+      };
+
+      // First row: the origin cell keeps its own text, the rest of its columns
+      // reappear immediately after it.
+      for (let c = colspan - 1; c >= 1; c--) {
+        const td = make((grid[0] && grid[0][c]) || '');
+        row.insertBefore(td, cell.nextSibling);
+        added.push(td);
+      }
+
+      // Later rows: insert the whole span, positioned by column number so the new
+      // cells land between the correct existing neighbours.
+      for (let k = 1; k < rows.length; k++) {
+        const tr = rows[k];
+        const sibs = Array.from(tr.children);
+        const before = sibs.find((x) => {
+          const n = parseInt(x.getAttribute('data-cell-col'), 10);
+          return Number.isFinite(n) && n > col;
+        }) || null;
+        for (let c = 0; c < colspan; c++) {
+          const td = make((grid[k] && grid[k][c]) || '');
+          tr.insertBefore(td, before);
+          added.push(td);
         }
       }
 
-      this._hintCell = cell;
-      this._hintPrev = cell.innerHTML;
-      cell.classList.add('typora-cell-hinted');
-      cell.innerHTML = '';
-      cell.appendChild(grid);
+      cell.classList.add('typora-unmerged-origin');
+      if (rowspan > 1) cell.removeAttribute('rowspan');
+      if (colspan > 1) cell.removeAttribute('colspan');
+
+      this._hint = { cell, rowspan, colspan, added, table };
     }
 
     _onOut(e) {
-      if (!this._hintCell) return;
-      // Ignore moves between descendants of the same cell.
+      if (!this._hint) return;
+      // Moving between the cells of the un-merged region must not tear it down, or it
+      // would flicker as the pointer crosses the new borders.
       const to = e.relatedTarget;
-      if (to && this._hintCell.contains(to)) return;
+      if (to && this._hint.table && this._hint.table.contains(to)) {
+        const stillInside = to === this._hint.cell
+          || this._hint.cell.contains(to)
+          || this._hint.added.some((x) => x === to || x.contains(to));
+        if (stillInside) return;
+      }
       this.clearCellHint();
     }
 
@@ -429,13 +472,15 @@
       return out.slice(0, count);
     }
 
+    /** Restore a cell that `_onOver` un-merged. */
     clearCellHint() {
-      const cell = this._hintCell;
-      if (!cell) return;
-      this._hintCell = null;
-      cell.classList.remove('typora-cell-hinted');
-      if (typeof this._hintPrev === 'string') cell.innerHTML = this._hintPrev;
-      this._hintPrev = null;
+      const h = this._hint;
+      if (!h) return;
+      this._hint = null;
+      for (const td of h.added) if (td.parentNode) td.parentNode.removeChild(td);
+      h.cell.classList.remove('typora-unmerged-origin');
+      if (h.rowspan > 1) h.cell.setAttribute('rowspan', String(h.rowspan));
+      if (h.colspan > 1) h.cell.setAttribute('colspan', String(h.colspan));
     }
 
     /**

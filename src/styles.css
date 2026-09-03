@@ -2501,31 +2501,25 @@ table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
   border-left: 2.5px solid var(--text-primary) !important;
 }
 
-/* Merged-cell hover preview: shows the raw `<` / `^` markers on a grid so the
-   columns line up without printing literal pipe characters. */
-.preview-content.typora-mode td.typora-cell-hinted,
-.preview-content.typora-mode th.typora-cell-hinted {
-  padding: 4px !important;
-  vertical-align: middle;
+/* Merged-cell hover: the cell is temporarily un-merged, and the positions it had
+   swallowed come back as real cells showing their own source text. Dashed borders
+   and a tinted background mark them as a transient preview rather than content. */
+.preview-content.typora-mode td.typora-unmerged-origin,
+.preview-content.typora-mode th.typora-unmerged-origin {
+  outline: 2px solid var(--luogu-blue);
+  outline-offset: -2px;
 }
 
-.typora-cell-hint {
-  display: grid;
-  gap: 2px 6px;
-  justify-content: center;
+.preview-content.typora-mode td.typora-unmerged-cell,
+.preview-content.typora-mode th.typora-unmerged-cell {
+  border: 1px dashed var(--luogu-blue) !important;
+  background: rgba(52, 152, 219, 0.08) !important;
+  color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
-  font-size: 0.88em;
-  line-height: 1.35;
-}
-
-.typora-cell-hint-item {
-  min-width: 1.2em;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: rgba(52, 152, 219, 0.12);
-  color: var(--text-primary);
   text-align: center;
-  white-space: pre;
+  /* The revealed markers are metadata, not prose: keep them from being selected or
+     dragged while the pointer is just passing over the table. */
+  user-select: none;
 }
 
 .preview-content .typora-hidden,
