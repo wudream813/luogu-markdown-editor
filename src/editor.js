@@ -44,6 +44,8 @@ const safeStorage = {
       this.linter = LinterClass ? new LinterClass() : null;
       
       this.docName = '洛谷题解_未命名.md';
+      // Scroll sync defaults to on; a stored '0' turns it off.
+      this.scrollSyncEnabled = safeStorage.getItem('luogu_editor_scroll_sync') !== '0';
       this.currentMode = 'split'; // 'split' | 'editor-only' | 'preview-only' | 'typora'
       this.typora = null;         // lazily constructed once the DOM is bound
       this.currentTheme = 'luogu';
@@ -99,6 +101,8 @@ const safeStorage = {
       }
 
       this.setTheme(savedTheme);
+      // Reflect the stored scroll-sync preference on the toolbar button.
+      this.toggleScrollSync(this.scrollSyncEnabled);
 
       if (savedContent && savedContent.trim().length > 0) {
         this.resetCalloutToggles();
@@ -432,7 +436,30 @@ const safeStorage = {
       return { lo: anchors[lo], hi: anchors[hi] };
     }
 
+    /**
+     * Turn scroll synchronisation on or off.
+     *
+     * Some people write with the two panes deliberately at different places (editing
+     * a footnote while reading the top of the article), where the auto-scroll fights
+     * them. The preference is remembered.
+     */
+    toggleScrollSync(force) {
+      this.scrollSyncEnabled = (force === undefined) ? !this.scrollSyncEnabled : !!force;
+      safeStorage.setItem('luogu_editor_scroll_sync', this.scrollSyncEnabled ? '1' : '0');
+      const btn = document.getElementById('scrollSyncBtn');
+      if (btn) {
+        btn.classList.toggle('active', this.scrollSyncEnabled);
+        btn.setAttribute('aria-pressed', this.scrollSyncEnabled ? 'true' : 'false');
+        btn.title = `滚动同步：${this.scrollSyncEnabled ? '开' : '关'}`;
+      }
+      if (this.showToast) {
+        this.showToast(`滚动同步已${this.scrollSyncEnabled ? '开启' : '关闭'}`, 'info');
+      }
+      return this.scrollSyncEnabled;
+    }
+
     syncScroll(source) {
+      if (!this.scrollSyncEnabled) return;
       // The pane being driven also emits `scroll`, which would drive the first pane
       // straight back. Rather than dropping events during a timed lock — which threw
       // away the intermediate positions of a fast wheel/inertia scroll and made the
@@ -652,7 +679,8 @@ const safeStorage = {
       if (isCtrl) {
         if (e.key === 's' || e.key === 'S') {
           e.preventDefault();
-          this.saveMarkdownFile();
+          // Fire-and-forget: it is async now (may await a file picker).
+          Promise.resolve(this.saveMarkdownFile()).catch(() => {});
           return;
         }
         if (e.key === 'b' || e.key === 'B') {
@@ -1986,6 +2014,7 @@ const safeStorage = {
     newDocument() {
       if (confirm('确定要新建文档吗？未保存的内容可在历史记录中恢复。')) {
         this.docName = '未命名_洛谷文章.md';
+        this._fileHandle = null;
         if (this.docNameInput) this.docNameInput.value = this.docName;
         this.resetCalloutToggles();
         this.setContent('# 未命名标题\n\n在此开始编写洛谷 Markdown 内容……\n');
@@ -2007,30 +2036,119 @@ const safeStorage = {
       reader.readAsText(file);
     }
 
-    triggerFileOpen() {
+    async triggerFileOpen() {
+      // Prefer the File System Access API: it hands back a handle, which is what
+      // lets Ctrl+S later overwrite the same file instead of re-downloading a copy.
+      if (typeof window !== 'undefined' && typeof window.showOpenFilePicker === 'function') {
+        try {
+          const [handle] = await window.showOpenFilePicker({
+            types: [{
+              description: 'Markdown / 文本文档',
+              accept: { 'text/markdown': ['.md', '.markdown'], 'text/plain': ['.txt'] },
+            }],
+            multiple: false,
+          });
+          if (handle) {
+            const file = await handle.getFile();
+            this._fileHandle = handle;
+            this.openLocalFile(file);
+            return;
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;   // user cancelled
+          // Otherwise fall back to the classic input below.
+        }
+      }
+
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.md,.markdown,.txt';
       input.onchange = (e) => {
         if (e.target.files && e.target.files.length > 0) {
+          // No handle from this path: Ctrl+S will offer Save As.
+          this._fileHandle = null;
           this.openLocalFile(e.target.files[0]);
         }
       };
       input.click();
     }
 
-    saveMarkdownFile() {
+    /**
+     * Ctrl+S. Writes straight back to the file that was opened, like a desktop
+     * editor; only asks where to put it when there is no such file.
+     *
+     * A handle only exists when the document came in through the File System Access
+     * API, so `triggerFileOpen` prefers that API and falls back to <input type=file>
+     * (which yields no writable handle) on browsers that lack it.
+     */
+    async saveMarkdownFile() {
       const content = this.getContent();
+      const fileName = this.docName.endsWith('.md') || this.docName.endsWith('.markdown')
+        || this.docName.endsWith('.txt')
+        ? this.docName : `${this.docName}.md`;
+
+      // 1. Known file → overwrite it in place, no dialog.
+      if (this._fileHandle) {
+        try {
+          const perm = this._fileHandle.queryPermission
+            ? await this._fileHandle.queryPermission({ mode: 'readwrite' })
+            : 'granted';
+          let ok = perm === 'granted';
+          if (!ok && this._fileHandle.requestPermission) {
+            ok = (await this._fileHandle.requestPermission({ mode: 'readwrite' })) === 'granted';
+          }
+          if (ok) {
+            const writable = await this._fileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            this.markSaved();
+            this.showToast(`已保存到「${this.docName}」`, 'success');
+            return;
+          }
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;
+          // Permission lost or file moved: fall through to Save As.
+        }
+      }
+
+      // 2. No file yet → native Save As, and remember the handle for next time.
+      if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function') {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: fileName,
+            types: [{ description: 'Markdown 文档', accept: { 'text/markdown': ['.md', '.markdown'] } }],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(content);
+          await writable.close();
+          this._fileHandle = handle;
+          this.docName = handle.name || fileName;
+          if (this.docNameInput) this.docNameInput.value = this.docName;
+          this.markSaved();
+          this.showToast(`已保存到「${this.docName}」`, 'success');
+          return;
+        } catch (err) {
+          if (err && err.name === 'AbortError') return;   // user cancelled
+        }
+      }
+
+      // 3. Browsers without the API (Firefox / Safari): ordinary download.
       const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = this.docName.endsWith('.md') ? this.docName : `${this.docName}.md`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      this.markSaved();
       this.showToast('文档已成功保存到本地！', 'success');
+    }
+
+    /** Note that the buffer matches what is on disk. */
+    markSaved() {
+      this._savedContent = this.getContent();
     }
 
     // One-click copy for Luogu

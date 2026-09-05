@@ -166,6 +166,11 @@
         if (el.classList && el.classList.contains('luogu-blockquote')) {
           sawContainer = true;
         }
+        // Same for a list: each <li> carries its own span, so clicking one bullet
+        // should edit that bullet rather than the whole list.
+        if (el.tagName === 'LI' || el.tagName === 'UL' || el.tagName === 'OL') {
+          sawContainer = true;
+        }
         el = el.parentElement;
       }
       return (sawContainer && innermost) ? innermost : outermost;
@@ -300,7 +305,16 @@
         const range = block && this.rangeOf(block, anchors);
         const spec = range && this.cellSpec(cell, range, all);
         if (spec) {
-          this.openPartial(block, spec, { host: cell, variant: 'cell' });
+          // The origin of an un-merged hint is a normal cell, so it lands here rather
+          // than in the ghost branch above. It must still keep the skeleton standing:
+          // tearing it down re-merged the table around the editor and the neighbouring
+          // marker cell collapsed to zero width.
+          const onHint = !!(this._hint && this._hint.cell === cell);
+          if (onHint) this._hint.pinned = true;
+          this.openPartial(block, spec, {
+            host: cell, variant: 'cell',
+            keepHint: onHint, inHost: onHint,
+          });
           return true;
         }
       }
@@ -455,6 +469,20 @@
      * True when the pointer is inside the corner badge drawn by the container's
      * ::before. The badge sits at the top-left of the box, above its border.
      */
+    /** Screen rectangle of the corner badge drawn by a container's ::before. */
+    badgeRect(el) {
+      const r = el.getBoundingClientRect();
+      const cs = window.getComputedStyle(el, '::before');
+      const w = parseFloat(cs.width) || 0;
+      const h = parseFloat(cs.height) || 0;
+      if (!w || !h) return null;
+      return {
+        left: r.left, top: r.top - h / 2,
+        right: r.left + w, bottom: r.top + h / 2,
+        width: w, height: h,
+      };
+    }
+
     hitsBadge(el, e) {
       if (typeof e.clientX !== 'number') return false;
       const r = el.getBoundingClientRect();
@@ -693,7 +721,8 @@
         { id: 'center', label: '居中', color: '#3498db' },
         { id: 'right', label: '居右', color: '#9b59b6' },
       ];
-      this.openChoiceMenu(badgeHost, ALIGNS, cur, (id) => this.setAlign(start, id));
+      this.openChoiceMenu(badgeHost, ALIGNS, cur, (id) => this.setAlign(start, id),
+        this.badgeRect(badgeHost));
     }
 
     /** Rewrite the alignment keyword on a `:::align{...}` opening line. */
@@ -714,7 +743,7 @@
      * `onPick` receives the chosen id. Extracted from the callout type menu so the
      * align menu is the same control rather than a second, subtly different one.
      */
-    openChoiceMenu(anchorEl, items, cur, onPick) {
+    openChoiceMenu(anchorEl, items, cur, onPick, anchorRect) {
       const icon = anchorEl;
       this.commit();
       this.closeCalloutMenu();
@@ -743,13 +772,19 @@
       }
 
       document.body.appendChild(menu);
-      const r = icon.getBoundingClientRect();
+      // Anchor to the badge, not to the whole container: an align box is as tall as
+      // its content, so dropping the menu from its bottom edge put it far away from
+      // the little corner label the user actually clicked.
+      const r = anchorRect || icon.getBoundingClientRect();
       menu.style.top = `${Math.round(r.bottom + 6)}px`;
       menu.style.left = `${Math.round(r.left)}px`;
-      // Keep the menu on screen when the callout sits near the bottom edge.
       const mb = menu.getBoundingClientRect();
+      // Keep the menu on screen when the anchor sits near the bottom / right edge.
       if (mb.bottom > window.innerHeight - 8) {
         menu.style.top = `${Math.round(r.top - mb.height - 6)}px`;
+      }
+      if (mb.right > window.innerWidth - 8) {
+        menu.style.left = `${Math.round(Math.max(8, window.innerWidth - 8 - mb.width))}px`;
       }
 
       this._menu = menu;
@@ -928,6 +963,7 @@
       const marker = document.createComment('typora-partial');
       let prevDisplay = host.style.display;
       let hostParked = null;
+      let hostWidth = null;
 
       if (opts.overlay) {
         // Overlay mode: the document keeps its normal rendering and the editor floats
@@ -948,6 +984,12 @@
         // to collapse them: table cells carry font rules from several selectors and
         // the stray character kept showing above the input.
         const parked = document.createDocumentFragment();
+        // Freeze the cell at the width it already had. A <textarea> reports a wide
+        // default intrinsic size, and in a table that propagates to the whole column:
+        // the edited column stretched and its neighbours were crushed to zero.
+        const hostRect = host.getBoundingClientRect();
+        hostWidth = host.style.width;
+        if (hostRect.width) host.style.width = `${Math.round(hostRect.width)}px`;
         while (host.firstChild) parked.appendChild(host.firstChild);
         hostParked = parked;
         host.appendChild(marker);
@@ -967,7 +1009,7 @@
         partial: true, prevDisplay,
         // Host stays visible in inHost mode, so it is not `block`; keep a separate
         // handle so commit() can restore what it was holding.
-        hostEl: host, hostParked,
+        hostEl: host, hostParked, hostWidth,
       };
 
       const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
@@ -1064,6 +1106,9 @@
       if (open.marker.parentNode) open.marker.parentNode.removeChild(open.marker);
       if (open.hostEl) {
         open.hostEl.classList.remove('typora-host-editing');
+        if (open.hostWidth !== null && open.hostWidth !== undefined) {
+          open.hostEl.style.width = open.hostWidth;
+        }
         // Put the original cell content back; a re-render replaces it anyway when
         // the text changed, but an unchanged cell must not be left empty.
         if (open.hostParked) open.hostEl.appendChild(open.hostParked);

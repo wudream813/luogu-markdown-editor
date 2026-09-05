@@ -813,7 +813,7 @@
 
         // 9. Lists (Unordered, Ordered, Task lists)
         if (/^\s*([*+-]|\d+[.)])\s+/.test(line)) {
-          const listResult = this.parseList(lines, i);
+          const listResult = this.parseList(lines, i, srcLineOf);
           out.push(listResult.html);
           i = listResult.nextIndex;
           continue;
@@ -1202,12 +1202,12 @@
     }
 
     // Parse Lists (including tasks) — indentation-aware, supports nesting.
-    parseList(lines, startIndex) {
+    parseList(lines, startIndex, srcLineOf) {
       let i = startIndex;
       const n = lines.length;
       while (i < n && /^\s*$/.test(lines[i])) i++;
       const baseIndent = this.indentOf(lines[i]);
-      return this.parseListAt(lines, i, baseIndent);
+      return this.parseListAt(lines, i, baseIndent, srcLineOf);
     }
 
     // Indentation of a line's leading whitespace (spaces + tabs).
@@ -1223,7 +1223,7 @@
 
     // Recursively parse all items at the given indentation level.
     // Returns { html, nextIndex }.
-    parseListAt(lines, startIndex, baseIndent) {
+    parseListAt(lines, startIndex, baseIndent, srcLineOf) {
       const n = lines.length;
       let i = startIndex;
       const isOrdered = /^\s*\d+[.)]\s+/.test(lines[i]);
@@ -1256,6 +1256,7 @@
         if (!match || this.indentOf(line) !== baseIndent) break;
 
         let rawText = match[3];
+        const itemStart = i;
         i++;
         let nestedHtml = '';
 
@@ -1288,7 +1289,7 @@
           const isItem = this.isListItem(nl);
           if (isItem && nind === baseIndent) break;              // sibling at same level
           if (isItem && nind > baseIndent) {                     // nested list
-            const sub = this.parseListAt(lines, i, nind);
+            const sub = this.parseListAt(lines, i, nind, srcLineOf);
             nestedHtml += sub.html;
             i = sub.nextIndex;
             continue;
@@ -1301,7 +1302,14 @@
           break;                                                 // non-indented non-item ends item
         }
 
-        items.push({ rawText, nestedHtml, taskIdx, taskChecked: taskMatch ? taskMatch[1].toLowerCase() === 'x' : false });
+        items.push({
+          rawText, nestedHtml, taskIdx,
+          taskChecked: taskMatch ? taskMatch[1].toLowerCase() === 'x' : false,
+          // Source span of this item, so the WYSIWYG editor can edit one bullet
+          // instead of replacing the entire list.
+          srcStart: srcLineOf ? srcLineOf[itemStart] : undefined,
+          srcEnd: srcLineOf ? srcLineOf[Math.max(itemStart, i - 1)] : undefined,
+        });
       }
 
       const renderedItems = items.map((it) => {
@@ -1322,7 +1330,9 @@
         } else {
           inner = this.renderInline(it.rawText);
         }
-        return `<li${liClass ? ` class="${liClass}"` : ''}>${inner}${it.nestedHtml}</li>`;
+        const liAttrs = (Number.isFinite(it.srcStart) ? ` data-src-line="${it.srcStart}"` : '')
+          + (Number.isFinite(it.srcEnd) ? ` data-src-end-line="${it.srcEnd}"` : '');
+        return `<li${liClass ? ` class="${liClass}"` : ''}${liAttrs}>${inner}${it.nestedHtml}</li>`;
       });
 
       const listClass = isTaskList ? 'luogu-list luogu-task-list' : 'luogu-list';

@@ -62,11 +62,11 @@ const path=require('path');
   await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
   await p.waitForTimeout(200);
 
-  // 列表（多行块）
-  await p.evaluate(()=>document.querySelector('#previewContent ul').click());
+  // 列表：要求 38 起，点某一条目只编辑该条目（点 <li> 命中最内层锚点）
+  await p.evaluate(()=>document.querySelectorAll('#previewContent ul li')[1].click());
   await p.waitForTimeout(150);
   v=await p.evaluate(()=>document.querySelector('.typora-block-input')?.value);
-  ck(v==='- 项目一\n- 项目二','列表整块展开',JSON.stringify(v));
+  ck(v==='- 项目二','点列表条目只展开该条目',JSON.stringify(v));
   await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
   await p.waitForTimeout(200);
 
@@ -720,6 +720,103 @@ const path=require('path');
     ck((await box()).includes('外层引用')&&!(await box()).includes('内层'),
       '点外层只编辑外层段',JSON.stringify(await box()));
   }
+
+  // ---- 要求 38: 列表条目可单独编辑 ---------------------------------------------
+  {
+    const L='- 第一项\n- 第二项\n- 第三项';
+    // 上一段用例可能还开着编辑框，先收掉再换文档
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);
+    await p.mouse.move(5,5);
+    await setSrc(L);await p.waitForTimeout(400);
+    const lis=await p.evaluate(()=>[...document.querySelectorAll('#previewContent li')]
+      .map(l=>({line:l.getAttribute('data-src-line'),end:l.getAttribute('data-src-end-line')})));
+    ck(lis.every(l=>l.line!==null&&l.end!==null),'每个 li 都带源码行号',JSON.stringify(lis));
+    // 命中条目自身的文字节点：<li> 的 textContent 含嵌套子项，不能整体比较
+    const hit=async(sel,txt)=>{const g=await p.evaluate(([s2,t])=>{
+      for(const el of document.querySelectorAll(s2)){
+        for(const n of el.childNodes){
+          if(n.nodeType!==3||n.data.trim()!==t)continue;
+          const rng=document.createRange();rng.selectNodeContents(n);
+          const r=rng.getClientRects()[0];
+          if(r)return {x:r.x+r.width/2,y:r.y+r.height/2};
+        }
+        if(el.textContent.trim()===t){
+          const rng=document.createRange();rng.selectNodeContents(el);
+          const r=rng.getClientRects()[0]||el.getBoundingClientRect();
+          return {x:r.x+r.width/2,y:r.y+r.height/2};
+        }
+      }
+      return null;},[sel,txt]);
+      if(!g)return false;await p.mouse.click(g.x,g.y);await p.waitForTimeout(400);return true;};
+    ck(await hit('#previewContent li','第二项'),'找到第二项');
+    ck((await box())==='- 第二项','点条目只编辑该条目',JSON.stringify(await box()));
+    await p.evaluate(()=>{const i=document.querySelector('.typora-block-input');
+      i.value='- 第二项改了';i.dispatchEvent(new Event('input',{bubbles:true}));i.blur();});
+    await p.waitForTimeout(550);
+    ck((await src())==='- 第一项\n- 第二项改了\n- 第三项','只改写该行',JSON.stringify(await src()));
+    await setSrc('1. 甲\n2. 乙\n   - 子项\n3. 丙');await p.waitForTimeout(360);
+    ck(await hit('#previewContent li li','子项'),'找到嵌套子项');
+    ck((await box()).trim()==='- 子项','嵌套条目单独编辑',JSON.stringify(await box()));
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(320);
+    await setSrc('- [ ] 待办A\n- [x] 待办B');await p.waitForTimeout(360);
+    ck(await hit('#previewContent .luogu-task-text','待办A'),'找到任务项');
+    ck((await box())==='- [ ] 待办A','任务项单独编辑',JSON.stringify(await box()));
+  }
+
+  // ---- 要求 38: 编辑合并格原始格不破坏邻格 --------------------------------------
+  {
+    const TBL='| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);
+    await p.mouse.move(5,5);
+    await setSrc(TBL);await p.waitForTimeout(400);
+    const a0=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')]
+      .find(x=>x.textContent.trim()==='A');const r=c.getBoundingClientRect();
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.move(a0.x,a0.y);await p.waitForTimeout(320);
+    const wBefore=await p.evaluate(()=>[...document.querySelectorAll('#previewContent td')]
+      .map(c=>Math.round(c.getBoundingClientRect().width)));
+    const a1=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')]
+      .find(x=>x.textContent.trim()==='A');const r=c.getBoundingClientRect();
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(a1.x,a1.y);await p.waitForTimeout(430);
+    const cells=await p.evaluate(()=>[...document.querySelectorAll('#previewContent td')]
+      .map(c=>({t:c.querySelector('textarea')?'[EDIT]':c.textContent.trim(),
+        w:Math.round(c.getBoundingClientRect().width)})));
+    ck((await box()).trim()==='A','编辑的是 A 格',JSON.stringify(await box()));
+    ck(cells.some(c=>c.t==='<'),'右侧 < 未消失',JSON.stringify(cells.map(c=>c.t)));
+    ck(cells.every(c=>c.w>0),'没有单元格塌陷为 0 宽',JSON.stringify(cells));
+    ck(Math.max(...cells.map(c=>c.w))<Math.max(...wBefore)*2.5,'列宽未被编辑框撑爆',
+      `${JSON.stringify(wBefore)} -> ${JSON.stringify(cells.map(c=>c.w))}`);
+    await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
+    await p.waitForTimeout(430);
+    ck((await src())===TBL,'原样提交不改文档');
+  }
+
+  // ---- 要求 38: align 角标菜单紧贴角标 ------------------------------------------
+  {
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);
+    await p.mouse.move(5,5);
+    await setSrc('\n\n\n:::align{center}\n居中文字。\n:::\n');await p.waitForTimeout(400);
+    const geo=await p.evaluate(()=>{const e=document.querySelector('[class*="luogu-align-"]');
+      const r=e.getBoundingClientRect();const cs=getComputedStyle(e,'::before');
+      return {left:r.left,top:r.top,bottom:r.bottom,bh:parseFloat(cs.height)||0};});
+    await p.mouse.click(geo.left+20,geo.top+2);await p.waitForTimeout(400);
+    const m=await p.evaluate(()=>{const el=document.querySelector('.typora-type-menu');
+      if(!el)return null;const r=el.getBoundingClientRect();
+      return {left:r.left,top:r.top,right:r.right,bottom:r.bottom};});
+    ck(!!m,'角标菜单已弹出');
+    ck(m&&Math.abs(m.left-geo.left)<12,'菜单左缘对齐角标',
+      `${m&&Math.round(m.left)} vs ${Math.round(geo.left)}`);
+    ck(m&&m.top<geo.top+geo.bh+20,'菜单紧贴角标下方而非容器底部',
+      `菜单 top=${m&&Math.round(m.top)} 角标 top=${Math.round(geo.top)} 容器 bottom=${Math.round(geo.bottom)}`);
+    ck(m&&m.top>=0&&m.left>=0,'菜单未跑出视口',JSON.stringify(m));
+    await p.evaluate(()=>document.body.click());await p.waitForTimeout(250);
+  }
+
 
 
 

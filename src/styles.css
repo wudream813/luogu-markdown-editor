@@ -2667,7 +2667,13 @@ table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
 }
 .preview-content.typora-mode .typora-host-editing .typora-block-input {
   width: 100%;
-  min-width: 2.5em;
+  /* Ignore the textarea's `cols` intrinsic width so it cannot widen the column. */
+  min-inline-size: 0;
+  field-sizing: content;
+  /* No min-width in em: a wide editor forces the whole column wider and squeezes
+     the neighbouring marker cell down to nothing. The cell already reserves the
+     space it had before the edit. */
+  min-width: 0;
   box-sizing: border-box;
   border: 2px solid var(--luogu-blue, #3498db);
   border-radius: 3px;
@@ -2749,4 +2755,20 @@ table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
   height: 10px;
   border-radius: 50%;
   flex: none;
+}
+
+/* Scroll-sync toggle: dim + strike through when off, so the state is readable at a
+   glance rather than only from the tooltip. */
+.tool-btn.scroll-sync-btn { position: relative; }
+.tool-btn.scroll-sync-btn:not(.active) { opacity: .45; }
+.tool-btn.scroll-sync-btn:not(.active)::after {
+  content: '';
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  top: 50%;
+  height: 2px;
+  background: currentColor;
+  transform: rotate(-45deg);
+  border-radius: 2px;
 }

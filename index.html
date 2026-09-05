@@ -221,7 +221,13 @@
       <button class="tool-btn" onclick="LuoguEditor.openModal('imageModal')"  title="插入图片 ![alt](URL)" aria-label="插入图片 ![alt](URL)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
       </button>
-      <button class="tool-btn" onclick="LuoguEditor.insertTaskList()"  title="任务列表 - [ ]" aria-label="任务列表 - [ ]">
+      <button class="tool-btn" onclick="LuoguEditor.insertUnorderedList()"  title="无序列表 (Ctrl+Shift+7)" aria-label="无序列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1.5" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.5" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button class="tool-btn" onclick="LuoguEditor.insertOrderedList()"  title="有序列表 (Ctrl+Shift+8)" aria-label="有序列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M3 4h1v4" stroke-width="1.6"/><path d="M2.6 14.2c0-.7.6-1.2 1.3-1.2s1.2.5 1.2 1.1c0 1.1-2.5 1.5-2.5 2.9h2.6" stroke-width="1.6"/></svg>
+      </button>
+      <button class="tool-btn" onclick="LuoguEditor.insertTaskList()"  title="任务列表 - [ ] (Ctrl+Shift+9)" aria-label="任务列表 - [ ]">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
       </button>
       <button class="tool-btn" onclick="LuoguEditor.insertHR()"  title="分割线 ---" aria-label="分割线 ---">
@@ -254,6 +260,12 @@
 
     <!-- Right-aligned View Mode Switchers -->
     <div style="margin-left: auto; display: flex; align-items: center; gap: 2px;">
+      <button class="tool-btn scroll-sync-btn active" id="scrollSyncBtn"
+        onclick="LuoguEditor.toggleScrollSync()"
+        title="滚动同步：开" aria-label="滚动同步" aria-pressed="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M12 8v8"/><polyline points="9 11 12 8 15 11"/><polyline points="9 13 12 16 15 13"/></svg>
+      </button>
+      <div class="toolbar-divider"></div>
       <button class="tool-btn view-mode-btn active" data-mode="split" onclick="LuoguEditor.setViewMode('split')"  title="双栏实时对比预览" aria-label="双栏实时对比预览">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
       </button>

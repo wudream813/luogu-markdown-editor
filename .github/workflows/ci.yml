@@ -136,6 +136,12 @@ jobs:
       - name: Typora mode suite
         run: node test-browser/typora.test.js
 
+      # Toolbar inserts, the scroll-sync toggle and Ctrl+S. Saving in particular is
+      # easy to regress into "always re-download a copy" instead of writing back to
+      # the opened file.
+      - name: Workspace behaviour suite
+        run: node test-browser/workspace.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:
