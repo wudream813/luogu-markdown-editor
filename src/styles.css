@@ -576,8 +576,25 @@ html, body {
 /* Only tint blocks that have no surface of their own. A code block / table / bilibili
    card / callout paints its own background, and washing --bg-secondary over it made
    the light theme show pale syntax colours on white. */
-.preview-content.typora-mode > *:hover:not(.luogu-code-block-wrapper):not(.luogu-code-block-wrap):not(.luogu-table-wrapper):not(.luogu-bilibili-container):not(details.luogu-callout) {
+.preview-content.typora-mode > *:hover:not(.luogu-code-block-wrapper):not(.luogu-code-block-wrap):not(.luogu-table-wrapper):not(.luogu-bilibili-container):not(details.luogu-callout):not(ul):not(ol) {
   background-color: var(--bg-secondary);
+}
+
+/* A list is edited one item at a time, so the hover affordance must point at the
+   item under the pointer rather than washing over the whole list. Innermost wins:
+   on a nested list only the deepest <li> containing the pointer lights up. */
+.preview-content.typora-mode li:hover {
+  cursor: text;
+}
+.preview-content.typora-mode li:hover > :not(ul):not(ol),
+.preview-content.typora-mode li:hover {
+  background-color: var(--bg-secondary);
+  border-radius: 4px;
+}
+.preview-content.typora-mode li:hover ul,
+.preview-content.typora-mode li:hover ol,
+.preview-content.typora-mode li:has(li:hover) {
+  background-color: transparent;
 }
 
 /* Blocks that paint their own background must not be tinted by the generic hover
@@ -931,6 +948,17 @@ html, body {
   height: 15px;
   accent-color: var(--luogu-blue);
   cursor: pointer;
+  flex: none;
+}
+
+/* The checkbox is the only place that toggles; everything else on the row edits the
+   item. Make that split visible: a pointer cursor on the box, a text caret on the
+   label text (which would otherwise inherit the label's pointer). */
+.preview-content.typora-mode .luogu-checkbox-label { cursor: text; }
+.preview-content.typora-mode .luogu-task-checkbox { cursor: pointer; }
+.preview-content.typora-mode .luogu-task-checkbox:hover {
+  outline: 2px solid var(--luogu-blue-light, rgba(52, 152, 219, 0.45));
+  outline-offset: 1px;
 }
 
 /* Luogu Code Blocks - with Auto-Wrapping in Preview */

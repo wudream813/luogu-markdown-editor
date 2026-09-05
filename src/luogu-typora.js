@@ -206,9 +206,19 @@
       // themselves interactive yet need to become editable.
       if (this.routeSubBlock(e)) return;
 
+      // A task checkbox is wrapped in a <label>, so a click anywhere on that label —
+      // including the text — is forwarded to the box by the browser. Only treat the
+      // box itself as "toggle"; a click on the label's text edits the item instead,
+      // and must have its default suppressed or it would silently flip the box too.
+      const taskBox = e.target.closest('.luogu-task-checkbox');
+      if (taskBox) return;
+      const taskLabel = e.target.closest('.luogu-checkbox-label');
+      if (taskLabel) e.preventDefault();
+
       // Let genuinely interactive controls keep working instead of turning the block
       // into source the moment the user aims at them.
-      if (e.target.closest('a, button, input, summary, .luogu-copy-btn, .luogu-bilibili-container')) {
+      if (!taskLabel
+        && e.target.closest('a, button, input, summary, .luogu-copy-btn, .luogu-bilibili-container')) {
         return;
       }
 

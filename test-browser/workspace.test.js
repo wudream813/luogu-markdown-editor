@@ -88,6 +88,29 @@ const { chromium } = require('playwright');
   ck(await p.evaluate(() => localStorage.getItem('luogu_editor_scroll_sync') === '1'),
     '开关状态写入偏好');
 
+  // 重新开启时必须立刻把预览拉到当前位置。此前只是恢复监听，两栏会一直错位到
+  // 下一次滚动为止。
+  await p.evaluate(() => LuoguEditor.toggleScrollSync(false));
+  await p.waitForTimeout(250);
+  await p.evaluate(() => {
+    document.getElementById('editorTextarea').scrollTop = 0;
+    document.getElementById('previewContent').scrollTop = 0;
+  });
+  await p.waitForTimeout(250);
+  await p.evaluate(() => {
+    const ta = document.getElementById('editorTextarea');
+    ta.scrollTop = 1200; ta.dispatchEvent(new Event('scroll'));
+  });
+  await p.waitForTimeout(400);
+  ck((await p.evaluate(() => document.getElementById('previewContent').scrollTop)) < 5,
+    '关闭期间预览保持不动');
+  await p.evaluate(() => LuoguEditor.toggleScrollSync(true));
+  await p.waitForTimeout(600);
+  const caughtUp = await p.evaluate(() => Math.round(document.getElementById('previewContent').scrollTop));
+  ck(caughtUp > 200, '重新开启后预览立即追上', `previewScrollTop=${caughtUp}`);
+  ck(Math.abs((await p.evaluate(() => document.getElementById('editorTextarea').scrollTop)) - 1200) < 60,
+    '编辑区位置未被反向拉动');
+
   // ---- save: write back vs Save As -------------------------------------------
   const save = await p.evaluate(async () => {
     const log = { picker: 0, wrote: [], download: 0 };

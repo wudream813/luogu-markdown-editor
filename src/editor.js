@@ -452,6 +452,12 @@ const safeStorage = {
         btn.setAttribute('aria-pressed', this.scrollSyncEnabled ? 'true' : 'false');
         btn.title = `滚动同步：${this.scrollSyncEnabled ? '开' : '关'}`;
       }
+      // Turning it back on must close the gap that opened while it was off,
+      // otherwise the two panes stay stranded until the next scroll event.
+      if (this.scrollSyncEnabled) {
+        this._echo = null;
+        this.syncScroll('editor');
+      }
       if (this.showToast) {
         this.showToast(`滚动同步已${this.scrollSyncEnabled ? '开启' : '关闭'}`, 'info');
       }

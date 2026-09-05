@@ -817,6 +817,93 @@ const path=require('path');
     await p.evaluate(()=>document.body.click());await p.waitForTimeout(250);
   }
 
+  // ---- 要求 39: 列表 hover 只高亮当前条目 ---------------------------------------
+  {
+    const TRANSPARENT='rgba(0, 0, 0, 0)';
+    // 上一段用例可能还开着类型/对齐菜单，它是 position:fixed 覆盖层，会挡住 hover
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(200);
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);await p.mouse.move(5,5);
+    await setSrc('- 第一项\n- 第二项\n- 第三项');await p.waitForTimeout(400);
+    const li2=await p.evaluate(()=>{const l=[...document.querySelectorAll('#previewContent li')][1];
+      const r=l.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    // 先移到别处再移入，确保触发一次真实的 mouseover（上一段用例可能停在同一元素上）
+    await p.mouse.move(li2.x,li2.y-200);await p.waitForTimeout(120);
+    await p.mouse.move(li2.x,li2.y);await p.waitForTimeout(400);
+    const hl=await p.evaluate(()=>({ul:getComputedStyle(document.querySelector('#previewContent ul')).backgroundColor,
+      li:[...document.querySelectorAll('#previewContent li')].map(l=>getComputedStyle(l).backgroundColor)}));
+    ck(hl.ul===TRANSPARENT,'hover 条目时整个列表不高亮',hl.ul);
+    ck(hl.li[1]!==TRANSPARENT,'当前条目被高亮',JSON.stringify(hl.li));
+    ck(hl.li[0]===TRANSPARENT&&hl.li[2]===TRANSPARENT,'其它条目不高亮',JSON.stringify(hl.li));
+    await setSrc('- 外层项\n  - 内层项\n  - 内层项2\n- 外层项2');await p.waitForTimeout(400);
+    const inner=await p.evaluate(()=>{
+      const li=[...document.querySelectorAll('#previewContent li li')].find(x=>x.textContent.trim()==='内层项');
+      const rng=document.createRange();rng.selectNodeContents(li);const r=rng.getClientRects()[0];
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.move(inner.x,inner.y-200);await p.waitForTimeout(120);
+    await p.mouse.move(inner.x,inner.y);await p.waitForTimeout(400);
+    const nb=await p.evaluate(()=>[...document.querySelectorAll('#previewContent li')]
+      .map(l=>getComputedStyle(l).backgroundColor));
+    ck(nb[0]===TRANSPARENT,'嵌套时外层项不高亮',JSON.stringify(nb));
+    ck(nb[1]!==TRANSPARENT,'嵌套时只有最内层项高亮',JSON.stringify(nb));
+    await p.mouse.move(5,5);await p.waitForTimeout(250);
+  }
+
+  // ---- 要求 39: 任务列表复选框与文字分工 ----------------------------------------
+  {
+    const T='- [ ] 待办A\n- [x] 待办B';
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);await p.mouse.move(5,5);
+    await setSrc(T);await p.waitForTimeout(400);
+    const cb=await p.evaluate(()=>{const c=document.querySelector('#previewContent .luogu-task-checkbox');
+      const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(cb.x,cb.y);await p.waitForTimeout(500);
+    ck((await src()).startsWith('- [x] 待办A'),'点复选框切换勾选',JSON.stringify(await src()));
+    ck(!(await p.evaluate(()=>!!document.querySelector('.typora-block-input'))),
+      '点复选框不进入编辑');
+    await setSrc(T);await p.waitForTimeout(400);
+    const tx=await p.evaluate(()=>{const t=document.querySelector('#previewContent .luogu-task-text');
+      const rng=document.createRange();rng.selectNodeContents(t);const r=rng.getClientRects()[0];
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(tx.x,tx.y);await p.waitForTimeout(450);
+    ck((await box())==='- [ ] 待办A','点文字编辑该任务项',JSON.stringify(await box()));
+    ck((await src())===T,'点文字不改变勾选状态',JSON.stringify(await src()));
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(400);
+    ck((await src())===T,'收起后源码不变',JSON.stringify(await src()));
+  }
+
+  // ---- 要求 39: 编辑单元格期间不出现第二组骨架 ----------------------------------
+  {
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(300);await p.mouse.move(5,5);
+    await setSrc('| 甲 | 乙 |\n|:--:|:--:|\n| A | 1 |\n| ^ | 2 |\n| B | 3 |\n| ^ | 4 |');
+    await p.waitForTimeout(400);
+    const at=(t)=>p.evaluate((txt)=>{const c=[...document.querySelectorAll('#previewContent td')]
+      .find(x=>x.textContent.trim()===txt);if(!c)return null;
+      const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};},t);
+    let A=await at('A');await p.mouse.move(A.x,A.y);await p.waitForTimeout(320);
+    A=await at('A');await p.mouse.click(A.x,A.y);await p.waitForTimeout(420);
+    ck((await box()).trim()==='A','正在编辑 A 格',JSON.stringify(await box()));
+    const B=await at('B');
+    if(B){await p.mouse.move(B.x,B.y);await p.waitForTimeout(450);}
+    const st=await p.evaluate(()=>({o:document.querySelectorAll('.typora-unmerged-origin').length,
+      i:document.querySelectorAll('.typora-block-input').length}));
+    ck(st.o<=1,'hover 另一合并格不产生第二组骨架',JSON.stringify(st));
+    ck(st.i===1,'编辑框仍只有一个',JSON.stringify(st));
+    const B2=await at('B');
+    if(B2){await p.mouse.click(B2.x,B2.y);await p.waitForTimeout(500);}
+    const st2=await p.evaluate(()=>({o:document.querySelectorAll('.typora-unmerged-origin').length,
+      i:document.querySelectorAll('.typora-block-input').length}));
+    ck(st2.o<=1&&st2.i<=1,'切换到另一格后仍只有一组',JSON.stringify(st2));
+    await p.evaluate(()=>document.querySelector('.typora-block-input')?.blur());
+    await p.waitForTimeout(350);await p.mouse.move(5,5);await p.waitForTimeout(300);
+    ck(await p.evaluate(()=>document.querySelectorAll('.typora-unmerged-cell').length===0),
+      '收起并移开后骨架清空');
+  }
+
+
 
 
 
