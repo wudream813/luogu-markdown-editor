@@ -800,7 +800,14 @@
           // 0, so deep content claims data-src-line="0" and scroll sync jumps to the
           // top of the document when it reaches them.
           const innerHtml = this.parseBlocks(quoteLines, quoteStart);
-          out.push(`<blockquote class="luogu-blockquote">${innerHtml}</blockquote>`);
+          // Carry an explicit end line as well. A nested quote's inner blocks each
+          // have their own data-src-line, but without an end line the editor cannot
+          // work out where the inner quote stops, so clicking anywhere inside a
+          // nested quote resolved to the outermost one and edited the wrong range.
+          const quoteEnd = srcLineOf[i - 1];
+          const qAttrs = (Number.isFinite(quoteStart) ? ` data-src-line="${quoteStart}"` : '')
+            + (Number.isFinite(quoteEnd) ? ` data-src-end-line="${quoteEnd}"` : '');
+          out.push(`<blockquote class="luogu-blockquote"${qAttrs}>${innerHtml}</blockquote>`);
           continue;
         }
 

@@ -40,6 +40,7 @@
       this._onClick = this._onClick.bind(this);
       this._onKeyDown = this._onKeyDown.bind(this);
       this._onOver = this._onOver.bind(this);
+      this._onMouseDown = this._onMouseDown.bind(this);
       this._onOut = this._onOut.bind(this);
       this._hint = null;
     }
@@ -51,6 +52,7 @@
       if (this.active) return;
       this.active = true;
       this.previewEl.classList.add('typora-mode');
+      this.previewEl.addEventListener('mousedown', this._onMouseDown, true);
       this.previewEl.addEventListener('click', this._onClick);
       this.previewEl.addEventListener('keydown', this._onKeyDown, true);
       this.previewEl.addEventListener('mouseover', this._onOver);
@@ -66,6 +68,7 @@
       this.previewEl.classList.remove('typora-mode');
       this.previewEl.removeEventListener('click', this._onClick);
       this.previewEl.removeEventListener('keydown', this._onKeyDown, true);
+      this.previewEl.removeEventListener('mousedown', this._onMouseDown, true);
       this.previewEl.removeEventListener('mouseover', this._onOver);
       this.previewEl.removeEventListener('mouseout', this._onOut);
       this.clearCellHint();
@@ -157,12 +160,35 @@
           || CONTAINER_BODY_RE.test(el.className || ''))) {
           sawContainer = true;
         }
+        // A blockquote nests too, and its inner blocks carry their own anchors.
+        // Without this, every click inside a quote resolved to the outermost quote,
+        // so editing a nested quote replaced the whole thing.
+        if (el.classList && el.classList.contains('luogu-blockquote')) {
+          sawContainer = true;
+        }
         el = el.parentElement;
       }
       return (sawContainer && innermost) ? innermost : outermost;
     }
 
     // ---- open / commit -------------------------------------------------------
+
+    /**
+     * Stop <summary> from toggling when the press lands on the title text or the
+     * type icon.
+     *
+     * Chromium toggles <details> on mousedown, so preventing the default at click
+     * time is already too late: the box had flipped and the editor recorded that
+     * flip as a deliberate fold. Renaming a box must not fold it.
+     */
+    _onMouseDown(e) {
+      if (!this.active || e.button !== 0) return;
+      const summary = e.target.closest && e.target.closest('.luogu-callout-summary');
+      if (!summary) return;
+      if (e.target.closest('.luogu-callout-icon')) { e.preventDefault(); return; }
+      const titleEl = e.target.closest('.luogu-callout-title');
+      if (titleEl && this.hitsText(titleEl, e)) e.preventDefault();
+    }
 
     _onClick(e) {
       if (!this.active) return;
@@ -255,19 +281,14 @@
         const ce = parseInt(ghost.getAttribute('data-hint-end'), 10);
         const block = this.blockFor(ghost);
         if (block && Number.isFinite(line) && Number.isFinite(cs) && Number.isFinite(ce)) {
-          // Restore the real (merged) table first and edit the marker in an overlay
-          // pinned to where the ghost was. Keeping the un-merged skeleton on screen
-          // left the rest of the table in a half-expanded state, with the origin cell
-          // re-merging around the hole the editor punched in it.
-          const rect = ghost.getBoundingClientRect();
-          const host = this._hint ? this._hint.cell : ghost;
-          const anchorRect = {
-            width: rect.width, height: rect.height,
-            top: rect.top, left: rect.left,
-          };
-          this.clearCellHint();
+          // Keep the un-merged skeleton exactly as hover drew it and edit this one
+          // marker in place: the surrounding ghost cells stay visible and keep
+          // showing their markers, only the edited cell turns into an input. The
+          // hint is pinned so the pointer leaving the table (to reach the editor)
+          // cannot tear the skeleton down mid-edit.
+          if (this._hint) this._hint.pinned = true;
           this.openPartial(block, { line, col: [cs, ce] }, {
-            host, variant: 'cell', overlay: anchorRect, keepHost: true,
+            host: ghost, variant: 'cell', keepHint: true, inHost: true,
           });
           return true;
         }
@@ -282,6 +303,17 @@
           this.openPartial(block, spec, { host: cell, variant: 'cell' });
           return true;
         }
+      }
+
+      // ---- align container: the corner badge switches left / center / right -------
+      // The badge is a ::before pseudo-element, so it cannot be an event target;
+      // test the click against the top-left corner box the badge is drawn in.
+      const alignBox = e.target.closest('[class*="luogu-align-"][data-src-line]');
+      if (alignBox && /luogu-align-(left|center|right)/.test(alignBox.className)
+        && this.hitsBadge(alignBox, e)) {
+        e.preventDefault();
+        this.openAlignMenu(alignBox, all);
+        return true;
       }
 
       // ---- callout: title text, type icon, and inner content are separate ---------
@@ -302,6 +334,9 @@
         const details = titleEl.closest('details.luogu-callout');
         const spec = details && this.calloutTitleSpec(details, all);
         if (spec) {
+          // The title lives inside <summary>, so the native toggle would fire as
+          // well and collapse the box the moment you click its name to rename it.
+          e.preventDefault();
           this.openPartial(details, spec, {
             host: titleEl, variant: 'title', placeholder: '折叠框标题',
           });
@@ -416,6 +451,23 @@
      * whole box as "the title" made clicks on empty header space open the rename
      * editor instead of toggling the callout.
      */
+    /**
+     * True when the pointer is inside the corner badge drawn by the container's
+     * ::before. The badge sits at the top-left of the box, above its border.
+     */
+    hitsBadge(el, e) {
+      if (typeof e.clientX !== 'number') return false;
+      const r = el.getBoundingClientRect();
+      const cs = window.getComputedStyle(el, '::before');
+      const w = parseFloat(cs.width) || 0;
+      const h = parseFloat(cs.height) || 0;
+      if (!w || !h || cs.content === 'none') return false;
+      // Generous vertical slack: the badge straddles the top border.
+      const pad = 4;
+      return e.clientX >= r.left - pad && e.clientX <= r.left + w + pad * 3
+        && e.clientY >= r.top - h && e.clientY <= r.top + h + pad;
+    }
+
     hitsText(el, e) {
       if (typeof e.clientX !== 'number') return true;
       // A synthetic click (el.click(), assistive tech, keyboard activation) reports
@@ -533,7 +585,7 @@
     }
 
     _onOut(e) {
-      if (!this._hint) return;
+      if (!this._hint || this._hint.pinned) return;
       // Moving between the cells of the un-merged region must not tear it down, or it
       // would flicker as the pointer crosses the new borders.
       const to = e.relatedTarget;
@@ -584,6 +636,7 @@
     clearCellHint() {
       const h = this._hint;
       if (!h) return;
+      h.pinned = false;
       this._hint = null;
       for (const td of h.added) if (td.parentNode) td.parentNode.removeChild(td);
       h.cell.classList.remove('typora-unmerged-origin');
@@ -616,6 +669,53 @@
       // align / epigraph are containers too, but they have no "type" to switch.
       if (!TYPES.some((t) => t.id === cur)) return;
 
+      this.openChoiceMenu(icon, TYPES, cur, (id) => this.setCalloutType(start, id));
+    }
+
+    /**
+     * Menu to switch a `:::align` container between left / center / right.
+     *
+     * Reuses the same popup as the callout type menu so both containers behave
+     * identically: the little corner badge that marks the container's extent is
+     * also the control that changes it.
+     */
+    openAlignMenu(badgeHost, all) {
+      const start = parseInt(badgeHost.getAttribute('data-src-line'), 10);
+      if (!Number.isFinite(start)) return;
+      const line = all[start];
+      const m = typeof line === 'string'
+        && line.match(/^(\s*:{2,}\s*align\s*\{\s*)(left|center|right)(\s*\})/i);
+      if (!m) return;
+
+      const cur = m[2].toLowerCase();
+      const ALIGNS = [
+        { id: 'left', label: '居左', color: '#95a5a6' },
+        { id: 'center', label: '居中', color: '#3498db' },
+        { id: 'right', label: '居右', color: '#9b59b6' },
+      ];
+      this.openChoiceMenu(badgeHost, ALIGNS, cur, (id) => this.setAlign(start, id));
+    }
+
+    /** Rewrite the alignment keyword on a `:::align{...}` opening line. */
+    setAlign(lineIdx, value) {
+      const all = this.lines();
+      const line = all[lineIdx];
+      const m = typeof line === 'string'
+        && line.match(/^(\s*:{2,}\s*align\s*\{\s*)(left|center|right)(\s*\}.*)$/i);
+      if (!m) return;
+      if (m[2].toLowerCase() === value) return;
+      all[lineIdx] = m[1] + value + m[3];
+      this.editor.setContent(all.join('\n'));
+    }
+
+    /**
+     * Shared popup: a short list of choices anchored under `anchorEl`.
+     *
+     * `onPick` receives the chosen id. Extracted from the callout type menu so the
+     * align menu is the same control rather than a second, subtly different one.
+     */
+    openChoiceMenu(anchorEl, items, cur, onPick) {
+      const icon = anchorEl;
       this.commit();
       this.closeCalloutMenu();
 
@@ -623,7 +723,7 @@
       menu.className = 'typora-type-menu';
       menu.setAttribute('role', 'menu');
 
-      for (const t of TYPES) {
+      for (const t of items) {
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'typora-type-item' + (t.id === cur ? ' is-current' : '');
@@ -636,7 +736,7 @@
         item.addEventListener('mousedown', (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
-          this.setCalloutType(start, t.id);
+          onPick(t.id);
           this.closeCalloutMenu();
         });
         menu.appendChild(item);
@@ -770,7 +870,8 @@
       // Not clearCellHint() unconditionally: when the host *is* one of the revealed
       // cells, tearing the hint down here would delete the element we are about to
       // anchor the editor to.
-      if (!(opts.host && this._hint && this._hint.added.includes(opts.host))) {
+      if (!opts.keepHint
+        && !(opts.host && this._hint && this._hint.added.includes(opts.host))) {
         this.clearCellHint();
       }
       this.commit();
@@ -826,6 +927,7 @@
       const host = opts.host || block;
       const marker = document.createComment('typora-partial');
       let prevDisplay = host.style.display;
+      let hostParked = null;
 
       if (opts.overlay) {
         // Overlay mode: the document keeps its normal rendering and the editor floats
@@ -838,6 +940,19 @@
         wrapper.style.width = `${Math.max(opts.overlay.width, 48)}px`;
         wrapper.style.height = `${opts.overlay.height}px`;
         this.previewEl.appendChild(wrapper);
+      } else if (opts.inHost) {
+        // Edit *inside* the host element rather than beside it. A <td> may only
+        // contain flow content, so injecting the editor as a sibling inside the <tr>
+        // dropped it out of the table layout and stretched it across the row.
+        // Park the host's own children (the marker glyph) instead of relying on CSS
+        // to collapse them: table cells carry font rules from several selectors and
+        // the stray character kept showing above the input.
+        const parked = document.createDocumentFragment();
+        while (host.firstChild) parked.appendChild(host.firstChild);
+        hostParked = parked;
+        host.appendChild(marker);
+        host.appendChild(wrapper);
+        host.classList.add('typora-host-editing');
       } else {
         host.parentNode.insertBefore(marker, host);
         host.parentNode.insertBefore(wrapper, host);
@@ -850,6 +965,9 @@
       this.openBlock = {
         wrapper, textarea: ta, block: opts.keepHost ? null : host, marker, range,
         partial: true, prevDisplay,
+        // Host stays visible in inHost mode, so it is not `block`; keep a separate
+        // handle so commit() can restore what it was holding.
+        hostEl: host, hostParked,
       };
 
       const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
@@ -866,7 +984,15 @@
      * user can type. Open every ancestor first.
      */
     revealAncestors(el) {
-      for (let d = el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) {
+      // A <summary> is visible whether or not its box is open, so an editor hosted
+      // there needs no reveal. Force-opening it here silently un-folded the box the
+      // moment you clicked its title to rename it.
+      const ownSummary = el.closest && el.closest('.luogu-callout-summary');
+      let from = el.closest('details');
+      if (ownSummary && from && ownSummary.parentElement === from) {
+        from = from.parentElement && from.parentElement.closest('details');
+      }
+      for (let d = from; d; d = d.parentElement && d.parentElement.closest('details')) {
         if (!d.open) d.open = true;
       }
     }
@@ -931,9 +1057,18 @@
       // Clean up the DOM swap regardless of whether anything changed. A hint that is
       // still standing (the editor was hosted by one of its revealed cells) must go
       // too, otherwise the un-merged skeleton would outlive the edit.
-      this.clearCellHint();
+      // Detach the editor *before* tearing the hint down: in inHost mode the wrapper
+      // lives inside one of the hint's ghost cells, and clearing the hint first would
+      // delete that cell with the editor still in it.
       if (open.wrapper.parentNode) open.wrapper.parentNode.removeChild(open.wrapper);
       if (open.marker.parentNode) open.marker.parentNode.removeChild(open.marker);
+      if (open.hostEl) {
+        open.hostEl.classList.remove('typora-host-editing');
+        // Put the original cell content back; a re-render replaces it anyway when
+        // the text changed, but an unchanged cell must not be left empty.
+        if (open.hostParked) open.hostEl.appendChild(open.hostParked);
+      }
+      this.clearCellHint();
       if (open.block) {
         open.block.classList.remove('typora-hidden');
         open.block.style.display = open.prevDisplay || '';

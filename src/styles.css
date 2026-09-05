@@ -1248,6 +1248,14 @@ code[class*="language-"] {
 .preview-content.typora-mode .luogu-align-center::before { content: "居中"; }
 .preview-content.typora-mode .luogu-align-right::before { content: "居右"; }
 
+/* The badge is the control that switches left/center/right, so make it read as
+   clickable rather than as a passive label. */
+.preview-content.typora-mode [class*="luogu-align-"]::before { cursor: pointer; }
+.preview-content.typora-mode [class*="luogu-align-"]:hover::before {
+  background: var(--luogu-blue, #3498db);
+  color: #fff;
+}
+
 .preview-content.typora-mode [class*="luogu-align-"]:hover {
   border-color: var(--luogu-blue);
 }
@@ -2643,7 +2651,32 @@ table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
 /* An editor pinned over the element it edits, leaving the document's own layout
    untouched. A merged table cell cannot host an inline editor without the table
    reflowing around it, so the cell editor floats instead. */
-.preview-content.typora-mode .typora-editing.typora-overlay {
+.preview-content.typora-mode .typora-editing/* Cell-local editing: the marker text is replaced by the input inside the same
+   <td>, so the un-merged skeleton around it keeps its own markers on screen. */
+.preview-content.typora-mode td.typora-host-editing,
+.preview-content.typora-mode th.typora-host-editing {
+  padding: 0 !important;
+  /* Collapse the cell's own text nodes: the editor replaces the marker, so the
+     original glyph must not linger above the input. */
+  font-size: 0;
+  line-height: 0;
+}
+.preview-content.typora-mode .typora-host-editing .typora-editing {
+  display: block;
+  font-size: 13px;
+}
+.preview-content.typora-mode .typora-host-editing .typora-block-input {
+  width: 100%;
+  min-width: 2.5em;
+  box-sizing: border-box;
+  border: 2px solid var(--luogu-blue, #3498db);
+  border-radius: 3px;
+  padding: 2px 4px;
+  text-align: center;
+  background: #fff;
+}
+
+.typora-overlay {
   position: absolute;
   z-index: 40;
   margin: 0;

@@ -582,14 +582,145 @@ const path=require('path');
       ck((await box()).trim()==='^','只编辑该标记格',JSON.stringify(await box()));
       const shp=await p.evaluate(()=>[...document.querySelectorAll('#previewContent table tr')]
         .map(r=>[...r.children].map(c=>c.textContent.trim()+(c.getAttribute('rowspan')||'')+(c.getAttribute('colspan')||''))));
-      ck(JSON.stringify(shp[1])==='["A22","1"]','其余单元格恢复正常合并渲染',JSON.stringify(shp));
-      ck(await p.evaluate(()=>!document.querySelector('.typora-unmerged-cell')),'不残留临时格');
-      ck(await p.evaluate(()=>!!document.querySelector('.typora-editing.typora-overlay')),'编辑器为浮层');
+      // 要求 37 起改为：保持 hover 拆开的骨架，只有被点的那一格变成输入框，
+      // 其余临时格继续显示自己的 < / ^ 标记。
+      ck(JSON.stringify(shp[1])==='["A","<","1"]','其余临时格保持骨架渲染',JSON.stringify(shp));
+      ck(await p.evaluate(()=>document.querySelectorAll('.typora-unmerged-cell').length===3),
+        '临时格仍在（共 3 个）',
+        String(await p.evaluate(()=>document.querySelectorAll('.typora-unmerged-cell').length)));
+      ck(await p.evaluate(()=>{const h=document.querySelector('.typora-host-editing');
+        return !!h && h.tagName==='TD' && h.contains(document.querySelector('.typora-block-input'));}),
+        '编辑框就地嵌在该单元格内');
       await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
       await p.waitForTimeout(320);
       ck((await src())===TBL,'原样提交不改文档');
     }
   }
+
+  // ---- 要求 37: 编辑合并标记时其余格照常渲染 -------------------------------------
+  {
+    const TBL='| 甲 | 乙 | 丙 |\n|:--:|:--:|:--:|\n| A | < | 1 |\n| ^ | ^ | 2 |';
+    await setSrc(TBL);await p.waitForTimeout(360);
+    const a=await p.evaluate(()=>{const c=[...document.querySelectorAll('td')].find(x=>x.textContent.trim()==='A');
+      const r=c.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.move(a.x,a.y);await p.waitForTimeout(300);
+    const hoverN=await p.evaluate(()=>document.querySelectorAll('#previewContent td').length);
+    const g=await p.evaluate(()=>{const t=[...document.querySelectorAll('.typora-unmerged-cell')]
+      .find(x=>x.textContent.trim()==='^');const r=t.getBoundingClientRect();
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(g.x,g.y);await p.waitForTimeout(400);
+    const cells=await p.evaluate(()=>[...document.querySelectorAll('#previewContent td')]
+      .map(c=>c.querySelector('textarea')?'[EDIT]':c.textContent.trim()));
+    ck((await box()).trim()==='^','只编辑被点的 ^ 格',JSON.stringify(await box()));
+    ck(cells.length===hoverN,'骨架格数与 hover 时一致',`${hoverN} vs ${cells.length}`);
+    ck(cells.filter(x=>x==='<').length===1,'其余 < 标记照常渲染',JSON.stringify(cells));
+    ck(cells.filter(x=>x==='^').length===1,'另一个 ^ 标记照常渲染',JSON.stringify(cells));
+    ck(cells.filter(x=>x==='[EDIT]').length===1,'只有一个编辑框',JSON.stringify(cells));
+    ck(await p.evaluate(()=>{const h=document.querySelector('.typora-host-editing');
+      return !!h && h.tagName==='TD' && h.contains(document.querySelector('.typora-block-input'));}),
+      '编辑框位于该单元格内');
+    await p.evaluate(()=>document.querySelector('.typora-block-input').blur());
+    await p.waitForTimeout(400);
+    ck((await src())===TBL,'原样提交不改文档');
+    await p.mouse.move(5,5);await p.waitForTimeout(350);
+    ck(await p.evaluate(()=>!document.querySelector('.typora-unmerged-cell')),'鼠标移开后骨架收起');
+  }
+
+  // ---- 要求 37: 改标题/类型不重置开合状态 ---------------------------------------
+  {
+    for (const [name,doc,expect] of [
+      ['手动展开(无 open)',':::info[我的标题]\n框内文字。\n:::',true],
+      ['手动收起(带 open)',':::info[我的标题]{open}\n框内文字。\n:::',false]]) {
+      await setSrc(doc);await p.waitForTimeout(360);
+      const arrow=await p.evaluate(()=>{const s=document.querySelector('summary');
+        const r=s.getBoundingClientRect();return {x:r.right-24,y:r.y+r.height/2};});
+      await p.mouse.click(arrow.x,arrow.y);await p.waitForTimeout(350);
+      ck(await p.evaluate(()=>document.querySelector('details.luogu-callout').open)===expect,
+        `${name}: 手动切换生效`);
+      const tg=await p.evaluate(()=>{const t=document.querySelector('.luogu-callout-title');
+        const rng=document.createRange();rng.selectNodeContents(t);const r=rng.getClientRects()[0];
+        return {x:r.x+r.width/2,y:r.y+r.height/2};});
+      await p.mouse.click(tg.x,tg.y);await p.waitForTimeout(350);
+      ck(await p.evaluate(()=>document.querySelector('details.luogu-callout').open)===expect,
+        `${name}: 点标题时开合不变`);
+      await p.evaluate(()=>{const i=document.querySelector('.typora-block-input');
+        i.value='新标题';i.dispatchEvent(new Event('input',{bubbles:true}));i.blur();});
+      await p.waitForTimeout(550);
+      ck(await p.evaluate(()=>document.querySelector('details.luogu-callout')?.open)===expect,
+        `${name}: 改标题后开合不变`,
+        `期望 ${expect} 实得 ${await p.evaluate(()=>document.querySelector('details.luogu-callout')?.open)}`);
+      ck((await src()).includes('新标题'),`${name}: 标题已写回`);
+    }
+    // 改类型同样保持
+    await setSrc(':::info[标题A]\n内容。\n:::');await p.waitForTimeout(360);
+    const arrow2=await p.evaluate(()=>{const s=document.querySelector('summary');
+      const r=s.getBoundingClientRect();return {x:r.right-24,y:r.y+r.height/2};});
+    await p.mouse.click(arrow2.x,arrow2.y);await p.waitForTimeout(350);
+    const ic=await p.evaluate(()=>{const i=document.querySelector('.luogu-callout-icon');
+      const r=i.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(ic.x,ic.y);await p.waitForTimeout(400);
+    const pick=await p.evaluate(()=>{const it=[...document.querySelectorAll('.typora-type-item')]
+      .find(x=>/成功/.test(x.textContent));const r=it.getBoundingClientRect();
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(pick.x,pick.y);await p.waitForTimeout(550);
+    ck(await p.evaluate(()=>document.querySelector('details.luogu-callout')?.open)===true,
+      '改类型后仍保持展开');
+    ck((await src()).startsWith(':::success'),'类型已写回');
+  }
+
+  // ---- 要求 37: align 角标菜单切换左/中/右 --------------------------------------
+  {
+    await setSrc(':::align{center}\n居中文字。\n:::');await p.waitForTimeout(360);
+    const badge=await p.evaluate(()=>{const e=document.querySelector('[class*="luogu-align-"]');
+      const r=e.getBoundingClientRect();return {x:r.x+20,y:r.y+2};});
+    await p.mouse.click(badge.x,badge.y);await p.waitForTimeout(400);
+    const items=await p.evaluate(()=>[...document.querySelectorAll('.typora-type-item')]
+      .map(x=>x.textContent.trim()));
+    ck(items.join(',')==='居左,居中,居右','角标弹出左/中/右菜单',JSON.stringify(items));
+    ck(await p.evaluate(()=>!document.querySelector('.typora-block-input')),'点角标不进入源码编辑');
+    const right=await p.evaluate(()=>{const it=[...document.querySelectorAll('.typora-type-item')]
+      .find(x=>/居右/.test(x.textContent));const r=it.getBoundingClientRect();
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    await p.mouse.click(right.x,right.y);await p.waitForTimeout(550);
+    ck((await src()).includes(':::align{right}'),'切换为居右',(await src()).split('\n')[0]);
+    ck(await p.evaluate(()=>!!document.querySelector('.luogu-align-right')),'渲染为居右');
+    // 容器内文字仍可单独编辑
+    const inner=await p.evaluate(()=>{const el=[...document.querySelectorAll('#previewContent [class*="luogu-align-"] p')]
+      .find(x=>x.textContent.trim()==='居中文字。');if(!el)return null;
+      const rng=document.createRange();rng.selectNodeContents(el);const r=rng.getClientRects()[0];
+      return {x:r.x+r.width/2,y:r.y+r.height/2};});
+    ck(!!inner,'找到容器内段落');
+    if(inner){await p.mouse.click(inner.x,inner.y);await p.waitForTimeout(400);
+      ck((await box())==='居中文字。','点容器内文字仍编辑该段',JSON.stringify(await box()));}
+  }
+
+  // ---- 要求 37: 嵌套引用分层编辑 -------------------------------------------------
+  {
+    const Q='> 外层引用。\n>\n> > 内层引用。\n> >\n> > 更深内容。';
+    await setSrc(Q);await p.waitForTimeout(360);
+    const hit=async(sel,txt)=>{const gg=await p.evaluate(([s,t])=>{
+      const el=[...document.querySelectorAll(s)].find(x=>x.textContent.trim()===t);
+      if(!el)return null;const rng=document.createRange();rng.selectNodeContents(el);
+      const r=rng.getClientRects()[0];return {x:r.x+r.width/2,y:r.y+r.height/2};},[sel,txt]);
+      if(!gg)return false;await p.mouse.click(gg.x,gg.y);await p.waitForTimeout(400);return true;};
+    ck(await p.evaluate(()=>{const q=document.querySelector('#previewContent blockquote blockquote');
+      return !!q && q.hasAttribute('data-src-line') && q.hasAttribute('data-src-end-line');}),
+      '内层引用带 data-src-line/end-line');
+    ck(await hit('#previewContent blockquote blockquote p','内层引用。'),'找到内层段落');
+    ck((await box()).includes('内层引用')&&!(await box()).includes('外层引用'),
+      '点内层只编辑内层',JSON.stringify(await box()));
+    await p.evaluate(()=>{const i=document.querySelector('.typora-block-input');
+      i.value='> > 内层改了。\n> >';i.dispatchEvent(new Event('input',{bubbles:true}));i.blur();});
+    await p.waitForTimeout(550);
+    const after=await src();
+    ck(after.includes('内层改了'),'内层修改已写回');
+    ck(after.includes('外层引用。')&&after.includes('更深内容。'),'其余层未被破坏',JSON.stringify(after));
+    await setSrc(Q);await p.waitForTimeout(360);
+    ck(await hit('#previewContent > blockquote > p','外层引用。'),'找到外层段落');
+    ck((await box()).includes('外层引用')&&!(await box()).includes('内层'),
+      '点外层只编辑外层段',JSON.stringify(await box()));
+  }
+
 
 
 

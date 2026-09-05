@@ -101,10 +101,13 @@ const safeStorage = {
       this.setTheme(savedTheme);
 
       if (savedContent && savedContent.trim().length > 0) {
+        this.resetCalloutToggles();
         this.setContent(savedContent, false);
       } else if (typeof LuoguTemplates !== 'undefined' && LuoguTemplates.demo) {
+        this.resetCalloutToggles();
         this.setContent(LuoguTemplates.demo, false);
       } else {
+        this.resetCalloutToggles();
         this.setContent('# 洛谷 Markdown 编辑器\n\n在此输入内容……', false);
       }
 
@@ -236,7 +239,21 @@ const safeStorage = {
 
       // <details> toggling changes layout without resizing the scroll container in
       // every case, so invalidate explicitly on toggle as well.
-      this.previewEl.addEventListener('toggle', () => { this._anchorsKey = null; }, true);
+      this.previewEl.addEventListener('toggle', (e) => {
+        this._anchorsKey = null;
+        // Remember boxes the reader opened/closed by hand, keyed by document order.
+        // Order survives a rename or a type change, which the old title-based key did
+        // not: renaming a box changed its key and silently dropped its open state.
+        const d = e.target;
+        if (!d || !d.classList || !d.classList.contains('luogu-callout')) return;
+        // Key on the source line, not document order: it survives a rename or a type
+        // change (both rewrite the same line in place) while still pointing at one
+        // specific box in the document.
+        const key = d.getAttribute('data-src-line');
+        if (key === null) return;
+        if (!this._calloutToggles) this._calloutToggles = new Map();
+        this._calloutToggles.set(key, d.open);
+      }, true);
       window.addEventListener('resize', () => {
         this._lineTopsKey = null;
         this._anchorsKey = null;
@@ -947,17 +964,7 @@ const safeStorage = {
       // The key combines document order with the title. Keying on the title alone made
       // two callouts sharing a title (very common: several "提示" boxes in one
       // solution) share a single state, so expanding one expanded them all.
-      const openCalloutKeys = new Set();
-      if (this.previewEl) {
-        const existingDetails = this.previewEl.querySelectorAll('details.luogu-callout');
-        existingDetails.forEach((d, idx) => {
-          if (d.hasAttribute('open')) {
-            const titleEl = d.querySelector('.luogu-callout-title');
-            const title = titleEl ? titleEl.textContent.trim() : '';
-            openCalloutKeys.add(`${idx}\u0000${title}`);
-          }
-        });
-      }
+      const toggles = this._calloutToggles || (this._calloutToggles = new Map());
 
       // Invalidate cached scroll anchors and line measurements: the DOM is about to
       // change, so any cached geometry is stale.
@@ -971,15 +978,16 @@ const safeStorage = {
       const html = this.parser ? this.parser.render(markdown) : '';
       this.patchPreview(html);
 
-      // 3. Restore user-opened states to callouts
-      if (openCalloutKeys.size > 0) {
-        const newDetails = this.previewEl.querySelectorAll('details.luogu-callout');
-        newDetails.forEach((d, idx) => {
-          const titleEl = d.querySelector('.luogu-callout-title');
-          const title = titleEl ? titleEl.textContent.trim() : '';
-          if (openCalloutKeys.has(`${idx}\u0000${title}`)) {
-            d.setAttribute('open', '');
-          }
+      // 3. Re-apply states the reader set by hand. Only boxes they actually toggled
+      // are overridden, so editing `{open}` in the source still takes effect on the
+      // boxes they never touched. Both directions are restored: a `{open}` box the
+      // reader collapsed must stay collapsed, not spring back open on every keystroke.
+      if (toggles.size) {
+        this.previewEl.querySelectorAll('details.luogu-callout').forEach((d) => {
+          const key = d.getAttribute('data-src-line');
+          if (key === null || !toggles.has(key)) return;
+          if (toggles.get(key)) d.setAttribute('open', '');
+          else d.removeAttribute('open');
         });
       }
 
@@ -1339,6 +1347,16 @@ const safeStorage = {
       this.autoSave();
     }
 
+    /**
+     * Forget hand-set fold states. Called when the document is replaced wholesale:
+     * line N in the new text is a different box, or none at all. In-place edits
+     * (rename, type switch) deliberately do NOT reset, so the box you are editing
+     * keeps the open/closed state you put it in.
+     */
+    resetCalloutToggles() {
+      if (this._calloutToggles) this._calloutToggles.clear();
+    }
+
     // Theme switcher
     setTheme(theme) {
       if (theme === 'luogu') theme = 'light';
@@ -1508,6 +1526,7 @@ const safeStorage = {
     insertTemplate(key) {
       if (typeof LuoguTemplates !== 'undefined' && LuoguTemplates[key]) {
         if (confirm('应用模板将覆盖当前编辑区内容，是否继续？')) {
+          this.resetCalloutToggles();
           this.setContent(LuoguTemplates[key]);
           this.showToast('模板应用成功！', 'success');
         }
@@ -1968,6 +1987,7 @@ const safeStorage = {
       if (confirm('确定要新建文档吗？未保存的内容可在历史记录中恢复。')) {
         this.docName = '未命名_洛谷文章.md';
         if (this.docNameInput) this.docNameInput.value = this.docName;
+        this.resetCalloutToggles();
         this.setContent('# 未命名标题\n\n在此开始编写洛谷 Markdown 内容……\n');
         this.showToast('已新建文档！', 'info');
       }
@@ -1980,6 +2000,7 @@ const safeStorage = {
         const text = e.target.result;
         this.docName = file.name;
         if (this.docNameInput) this.docNameInput.value = this.docName;
+        this.resetCalloutToggles();
         this.setContent(text);
         this.showToast(`已成功打开文件: ${file.name}`, 'success');
       };
