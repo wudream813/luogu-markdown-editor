@@ -2251,6 +2251,115 @@ const safeStorage = {
       padding: 40px 16px 80px;
       transition: background-color 0.2s, color 0.2s;
     }
+    /* Table of contents, pinned beside the article like Luogu's article view.
+       Built at load time from the headings actually present, so it can never drift
+       from the document. Hidden entirely when there is nothing worth listing. */
+    .article-toc {
+      position: fixed;
+      top: 40px;
+      left: max(16px, calc(50% - 440px - 250px));
+      width: 220px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding: 14px 6px 14px 0;
+      font-size: 13px;
+      line-height: 1.5;
+      z-index: 20;
+    }
+    .article-toc[hidden] { display: none; }
+    .toc-title {
+      font-weight: 600;
+      color: var(--text-muted);
+      padding: 0 10px 8px;
+      letter-spacing: .05em;
+    }
+    .toc-list { list-style: none; margin: 0; padding: 0; }
+    .toc-list a {
+      display: block;
+      padding: 4px 10px;
+      color: var(--text-muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      border-radius: 0 4px 4px 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      transition: color .15s, background-color .15s, border-color .15s;
+    }
+    .toc-list a::before {
+      content: '—';
+      opacity: .45;
+      margin-right: 6px;
+    }
+    .toc-list a:hover {
+      color: var(--primary);
+      background: rgba(52, 152, 219, .08);
+    }
+    .toc-list a.is-active {
+      color: var(--primary);
+      border-left-color: var(--primary);
+      background: rgba(52, 152, 219, .10);
+      font-weight: 600;
+    }
+    .toc-lv2 a { padding-left: 22px; }
+    .toc-lv3 a { padding-left: 34px; }
+    .toc-lv4 a { padding-left: 46px; }
+    .toc-lv5 a { padding-left: 58px; }
+    .toc-lv6 a { padding-left: 70px; }
+    .toc-fab {
+      display: none;
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 30;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--card-bg);
+      color: var(--text);
+      font-size: 18px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,.15);
+    }
+    /* Not enough room for a side rail: fold the TOC into a toggled panel. */
+    @media (max-width: 1400px) {
+      .article-toc {
+        left: 16px;
+        top: auto;
+        bottom: 72px;
+        max-height: 60vh;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px 8px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.18);
+      }
+      .article-toc:not(.is-open) { display: none; }
+      .toc-fab.has-toc { display: block; }
+    }
+
+    /* Media must never exceed the article column. The preview pane gets this from
+       .luogu-img in styles.css, but the export only harvests KaTeX and Prism rules,
+       so a high-resolution image used to render at its full intrinsic pixel width
+       and push the whole page sideways. */
+    .article-content img,
+    .article-content video,
+    .article-content canvas,
+    .article-content svg:not(.katex svg) {
+      max-width: 100%;
+      height: auto;
+    }
+    .article-content .luogu-img-wrapper {
+      display: inline-block;
+      max-width: 100%;
+    }
+    /* Wide blocks scroll inside themselves instead of widening the page. */
+    .article-content .luogu-table-wrapper,
+    .article-content .katex-display {
+      max-width: 100%;
+      overflow-x: auto;
+    }
     .article-container {
       max-width: 880px;
       margin: 0 auto;
@@ -2556,6 +2665,7 @@ const safeStorage = {
       .luogu-tuack-table tr:hover td { background: #eaf2f8 !important; }
       body { padding: 0; background: #fff; color: #1a1a1a; }
       .article-container { border: none; box-shadow: none; padding: 0; max-width: 100%; }
+      .article-toc, .toc-fab { display: none !important; }
       .action-bar, .luogu-code-copy-btn, .toast-tip, .luogu-bilibili-container { display: none !important; }
       .luogu-callout { display: block !important; margin: 12px 0 !important; }
       .luogu-callout-content { display: block !important; }
@@ -2571,6 +2681,11 @@ const safeStorage = {
   </style>
 </head>
 <body>
+  <button class="toc-fab" id="tocFab" onclick="toggleToc()" aria-label="目录" title="目录">☰</button>
+  <nav class="article-toc" id="articleToc" aria-label="目录" hidden>
+    <div class="toc-title">目录</div>
+    <ul class="toc-list" id="tocList"></ul>
+  </nav>
   <div class="article-container">
     <div class="article-header">
       <div class="article-meta">
@@ -2618,6 +2733,129 @@ const safeStorage = {
       var cur = html.getAttribute('data-theme') || 'light';
       html.setAttribute('data-theme', cur === 'light' ? 'dark' : 'light');
     }
+
+    function toggleToc() {
+      var toc = document.getElementById('articleToc');
+      if (toc) toc.classList.toggle('is-open');
+    }
+
+    // Build the table of contents from the headings that are actually in the
+    // document, then keep the current one marked while the reader scrolls.
+    (function buildToc() {
+      var body = document.getElementById('articleBody');
+      var toc = document.getElementById('articleToc');
+      var list = document.getElementById('tocList');
+      if (!body || !toc || !list) return;
+
+      var heads = [].slice.call(body.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+        .filter(function (h) { return (h.textContent || '').trim(); });
+      // One heading (or none) is not a table of contents worth showing.
+      if (heads.length < 2) return;
+
+      var used = {};
+      var links = [];
+      heads.forEach(function (h, i) {
+        // Headings already carry ids, but guarantee uniqueness and a fallback so
+        // every entry is clickable even for duplicate or empty-slug titles.
+        var id = h.id;
+        if (!id || used[id]) { id = 'toc-h-' + i; h.id = id; }
+        used[id] = true;
+
+        var text = (h.textContent || '').trim();
+        var li = document.createElement('li');
+        li.className = 'toc-lv' + h.tagName.charAt(1);
+        var a = document.createElement('a');
+        a.href = '#' + id;
+        a.textContent = text;
+        a.title = text;
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          // Honour the click even when the target sits in the unscrollable last
+          // screenful, where geometry alone cannot tell these sections apart.
+          pinned = id;
+          h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          history.replaceState(null, '', '#' + id);
+          if (window.matchMedia('(max-width: 1400px)').matches) toc.classList.remove('is-open');
+          setActive(a);
+        });
+        li.appendChild(a);
+        list.appendChild(li);
+        links.push({ el: h, link: a });
+      });
+
+      toc.hidden = false;
+      var fab = document.getElementById('tocFab');
+      if (fab) fab.classList.add('has-toc');
+
+      var active = null;
+      var pinned = null;
+
+      function setActive(link) {
+        if (active === link) return;
+        if (active) active.classList.remove('is-active');
+        link.classList.add('is-active');
+        active = link;
+        if (toc.scrollHeight > toc.clientHeight) {
+          var lr = link.getBoundingClientRect();
+          var tr = toc.getBoundingClientRect();
+          if (lr.top < tr.top || lr.bottom > tr.bottom) link.scrollIntoView({ block: 'nearest' });
+        }
+      }
+
+      function mark() {
+        // The current section is the last heading whose top is above the reading
+        // line.
+        var line = 120;
+        var cur = links[0];
+        for (var i = 0; i < links.length; i++) {
+          if (links[i].el.getBoundingClientRect().top <= line) cur = links[i];
+        }
+
+        // The final screenful cannot scroll any further, so every heading inside it
+        // would otherwise stay unreachable (they never cross the reading line) and
+        // the last entry would swallow them all. Within that dead zone, pick by how
+        // far through it we are, so those sections still light up in turn.
+        var maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        if (maxScroll > 0 && window.scrollY >= maxScroll - 1) {
+          var tail = links.filter(function (l) {
+            return l.el.getBoundingClientRect().top > line;
+          });
+          if (tail.length) cur = tail[0];
+        }
+        if (pinned) {
+          var keep = null;
+          for (var j = 0; j < links.length; j++) {
+            if (links[j].el.id === pinned) { keep = links[j]; break; }
+          }
+          // Release the pin once the reader scrolls somewhere the geometry can
+          // resolve on its own.
+          if (keep && keep !== cur && !settled) { setActive(keep.link); return; }
+          pinned = null;
+        }
+        setActive(cur.link);
+      }
+
+      var ticking = false;
+      var settled = false;
+      var settleTimer = null;
+      function onScroll() {
+        // Any scroll that is still arriving right after a click is the smooth
+        // scroll itself; only a later, quiet scroll counts as the reader moving on.
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(function () { settled = false; }, 400);
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(function () { ticking = false; mark(); });
+      }
+      window.addEventListener('wheel', function () { settled = true; }, { passive: true });
+      window.addEventListener('touchmove', function () { settled = true; }, { passive: true });
+      window.addEventListener('keydown', function (ev) {
+        if (/^(Arrow|Page|Home|End| )/.test(ev.key)) settled = true;
+      });
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll, { passive: true });
+      mark();
+    })();
 
     window.copyCodeBlock = function(btn) {
       var wrapper = btn.closest('.luogu-code-block-wrapper');

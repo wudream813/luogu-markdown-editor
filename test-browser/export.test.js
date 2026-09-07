@@ -177,6 +177,142 @@ const SNAP = `(function(root){
     }
   }
 
+  // ---- 要求 40: 导出件的目录 ------------------------------------------------------
+  {
+    const secs=['背景','这是什么','使用','在线快速体验','单文件运行','其他方式','功能','开源协议','结语'];
+    const MD=['# LuoguMarkdownEditor',''].concat(secs.flatMap((x,i)=>
+      [(i>=3&&i<=5?'###':'##')+' '+x,''].concat(
+        Array.from({length:12},(_,k)=>x+' 的第 '+(k+1)+' 段内容，用来撑高页面。')).concat([''])
+    )).join('\n');
+    const pg=await b.newPage({viewport:{width:1600,height:900}});
+    await pg.goto(url,{waitUntil:'networkidle'});
+    await pg.evaluate((v)=>{const ta=document.getElementById('editorTextarea');
+      ta.value=v;ta.dispatchEvent(new Event('input',{bubbles:true}));
+      LuoguEditor.render();LuoguEditor.setViewMode('preview');},MD);
+    await pg.waitForTimeout(600);
+    const h=await pg.evaluate(async()=>{let cap=null;const OB=window.Blob;
+      window.Blob=class extends OB{constructor(a,o){super(a,o);
+        if(o&&/html/.test(o.type||''))cap=a[0];}};
+      window.showSaveFilePicker=undefined;HTMLAnchorElement.prototype.click=function(){};
+      await LuoguEditor.exportStandaloneHTML();window.Blob=OB;return cap;});
+    await pg.close();
+
+    const v=await b.newPage({viewport:{width:1600,height:900}});
+    const verr=[];v.on('pageerror',(e)=>verr.push(e.message));
+    await v.setContent(h,{waitUntil:'networkidle'});
+    await v.waitForTimeout(600);
+
+    const items=await v.evaluate(()=>[...document.querySelectorAll('.toc-list a')]
+      .map(a=>({t:a.textContent,cls:a.parentElement.className,href:a.getAttribute('href')})));
+    ck(items.length===10,'目录列出全部标题',String(items.length));
+    ck(items[0].t==='LuoguMarkdownEditor'&&items[0].cls==='toc-lv1','一级标题层级正确',
+      JSON.stringify(items[0]));
+    ck(items.some(x=>x.cls==='toc-lv3'),'三级标题有更深缩进层级',
+      JSON.stringify(items.map(x=>x.cls)));
+    ck(items.every(x=>x.href&&x.href.length>1),'每个条目都有锚点');
+    ck(await v.evaluate(()=>[...document.querySelectorAll('.toc-list a')]
+      .every(a=>document.getElementById(decodeURIComponent(a.getAttribute('href').slice(1))))),
+      '锚点都能定位到真实标题');
+
+    // 滚动到某节，该节应被标记
+    const jump=async(name)=>{const y=await v.evaluate((n)=>{
+      const el=[...document.querySelectorAll('#articleBody h2,#articleBody h3')]
+        .find(x=>x.textContent.trim()===n);
+      return window.scrollY+el.getBoundingClientRect().top-60;},name);
+      await v.evaluate((t)=>window.scrollTo({top:t,behavior:'instant'}),y);
+      await v.waitForTimeout(320);
+      return v.evaluate(()=>document.querySelector('.toc-list a.is-active')?.textContent);};
+    ck(await jump('使用')==='使用','滚动时高亮当前章节');
+    ck(await jump('功能')==='功能','滚动到后段仍准确高亮');
+
+    // 点击目录跳转（含位于最后一屏、无法再滚动的章节）
+    await v.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));
+    await v.waitForTimeout(300);
+    await v.evaluate(()=>[...document.querySelectorAll('.toc-list a')]
+      .find(a=>a.textContent==='开源协议').click());
+    await v.waitForTimeout(900);
+    ck(await v.evaluate(()=>document.querySelector('.toc-list a.is-active')?.textContent)==='开源协议',
+      '点击最后一屏的章节也能正确标记',
+      String(await v.evaluate(()=>document.querySelector('.toc-list a.is-active')?.textContent)));
+    ck(await v.evaluate(()=>Math.round(window.scrollY))>0,'点击目录确实发生了跳转');
+
+    // 明暗两色下当前项都要可辨认
+    for(const th of ['light','dark']){
+      await v.evaluate((t)=>document.documentElement.setAttribute('data-theme',t),th);
+      await v.waitForTimeout(250);
+      const cmp=await v.evaluate(()=>{
+        const act=document.querySelector('.toc-list a.is-active');
+        const oth=[...document.querySelectorAll('.toc-list a')]
+          .find(a=>!a.classList.contains('is-active'));
+        const g=(e)=>{const s=getComputedStyle(e);return s.color+'|'+s.backgroundColor;};
+        return g(act)!==g(oth);});
+      ck(cmp,`${th} 主题下当前项与其它项可区分`);
+    }
+    ck(verr.length===0,'目录脚本无报错',verr.join(';'));
+    await v.close();
+
+    // 标题少于两个时不显示目录
+    const pg2=await b.newPage({viewport:{width:1600,height:800}});
+    await pg2.goto(url,{waitUntil:'networkidle'});
+    await pg2.evaluate(()=>{const ta=document.getElementById('editorTextarea');
+      ta.value='# 只有一个标题\n\n正文。';ta.dispatchEvent(new Event('input',{bubbles:true}));
+      LuoguEditor.render();LuoguEditor.setViewMode('preview');});
+    await pg2.waitForTimeout(500);
+    const h2=await pg2.evaluate(async()=>{let cap=null;const OB=window.Blob;
+      window.Blob=class extends OB{constructor(a,o){super(a,o);
+        if(o&&/html/.test(o.type||''))cap=a[0];}};
+      window.showSaveFilePicker=undefined;HTMLAnchorElement.prototype.click=function(){};
+      await LuoguEditor.exportStandaloneHTML();window.Blob=OB;return cap;});
+    await pg2.close();
+    const v2=await b.newPage({viewport:{width:1600,height:800}});
+    await v2.setContent(h2,{waitUntil:'networkidle'});
+    await v2.waitForTimeout(400);
+    ck(await v2.evaluate(()=>{const t=document.getElementById('articleToc');
+      return !!t.hidden||getComputedStyle(t).display==='none';}),'标题过少时不显示目录');
+    await v2.close();
+  }
+
+  // ---- 要求 40: 大图不得溢出 -------------------------------------------------------
+  {
+    const pg=await b.newPage({viewport:{width:1200,height:800}});
+    await pg.goto(url,{waitUntil:'networkidle'});
+    // 2400x600 的 SVG 通过 blob: 提供，避免依赖磁盘文件
+    await pg.evaluate(()=>{const ta=document.getElementById('editorTextarea');
+      ta.value='# 图\n\n![大图](wide-test.png)\n\n## 第二节\n\n正文。';
+      ta.dispatchEvent(new Event('input',{bubbles:true}));
+      LuoguEditor.render();LuoguEditor.setViewMode('preview');});
+    await pg.waitForTimeout(500);
+    const h=await pg.evaluate(async()=>{let cap=null;const OB=window.Blob;
+      window.Blob=class extends OB{constructor(a,o){super(a,o);
+        if(o&&/html/.test(o.type||''))cap=a[0];}};
+      window.showSaveFilePicker=undefined;HTMLAnchorElement.prototype.click=function(){};
+      await LuoguEditor.exportStandaloneHTML();window.Blob=OB;return cap;});
+    await pg.close();
+    ck(/\.article-content\s+img/.test(h)||/article-content img/.test(h),
+      '导出模板包含图片约束规则');
+
+    const v=await b.newPage({viewport:{width:1200,height:800}});
+    // 把 <img> 换成一张真实的超宽图片再测实际布局
+    await v.setContent(h.replace('src="wide-test.png"',
+      'src="data:image/svg+xml;base64,'+Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="600">'
+        +'<rect width="2400" height="600" fill="#39f"/></svg>').toString('base64')+'"'),
+      {waitUntil:'networkidle'});
+    await v.waitForTimeout(600);
+    const m=await v.evaluate(()=>{const img=document.querySelector('.article-content img');
+      const box=document.querySelector('.article-container');
+      return {mw:getComputedStyle(img).maxWidth,
+        imgW:Math.round(img.getBoundingClientRect().width),
+        boxW:Math.round(box.getBoundingClientRect().width),
+        docW:document.documentElement.scrollWidth,
+        viewW:window.innerWidth};});
+    ck(m.mw==='100%','导出件中图片 max-width 为 100%',JSON.stringify(m));
+    ck(m.imgW<=m.boxW,'图片不超出文章容器',JSON.stringify(m));
+    ck(m.docW<=m.viewW+1,'页面不出现横向溢出',JSON.stringify(m));
+    await v.close();
+  }
+
+
 
   console.log(`\n导出保真 ${pass + fail} 项，失败 ${fail}`);
   await b.close();
