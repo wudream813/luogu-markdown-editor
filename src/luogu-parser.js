@@ -528,17 +528,47 @@
       // group at the end of each formula and the definition is discarded before the
       // next one starts.
       const docMacros = Object.create(null);
-      // Rendering must follow document order for the same reason: a macro is only
-      // visible to formulas that come after its definition. `store` is already in
-      // source order because extractMath() appends as it scans.
+
+      // Rendering MUST follow document order: a macro is only visible to formulas
+      // that come after its definition, so rendering out of order makes a later
+      // definition apply to an earlier formula (or, worse, an earlier use miss a
+      // definition that precedes it in the source).
       //
+      // `store` is NOT in document order. extractMath() runs one pass for display
+      // math and separate passes for inline math, so the array is grouped by type:
+      // for "$\gdef\dp{..}$ ... $$\dp_i$$" the display formula is stored first and
+      // was therefore rendered before the inline formula that defines \dp — the
+      // macro came out undefined inside display math while working fine inline.
+      // Order by where each placeholder actually sits in the rendered HTML, which
+      // is the real document order regardless of extraction strategy.
+      //
+      // Positions are collected in ONE regex sweep rather than an indexOf() inside
+      // the comparator: the comparator runs O(n log n) times and each indexOf
+      // rescans the whole document, which turned rendering super-linear (a 4x
+      // larger document cost ~13x) and tripped the performance guard test.
+      const idPos = new Map();
+      {
+        const scan = /LUOGUMATH(?:BLOCK|INLINE)\d+END/g;
+        let m;
+        while ((m = scan.exec(html)) !== null) {
+          if (!idPos.has(m[0])) idPos.set(m[0], m.index);
+        }
+      }
+      const ordered = store.slice().sort((a, bItem) => {
+        // A placeholder that no longer appears (e.g. dropped inside a stripped
+        // block) sorts last; its position cannot matter to anything visible.
+        const ia = idPos.has(a.id) ? idPos.get(a.id) : Infinity;
+        const ib = idPos.has(bItem.id) ? idPos.get(bItem.id) : Infinity;
+        return ia - ib;
+      });
+
       // The cache key carries a fingerprint of every definition seen so far, not a
       // counter: a counter restarts at 1 in every document, so `\x` after the first
       // definition of document A and of document B would share the key "m1" and the
       // second document would be served the first one's markup.
       let macroCtx = '';
 
-      for (const item of store) {
+      for (const item of ordered) {
         let rendered = '';
         if (katexLib) {
           const displayMode = item.type === 'display';

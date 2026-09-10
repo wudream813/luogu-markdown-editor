@@ -37,6 +37,54 @@ const mathText = (html) => (visible(html).match(/<math[\s\S]*?<\/math>/g) || [])
 // KaTeX renders an unknown control sequence as red text under throwOnError:false.
 const hasUndefined = (html) => /color:#cc0000/.test(visible(html));
 
+// Undefined-ness per formula container. Counting `color:#cc0000` across the whole
+// document double-counts (KaTeX emits both an HTML and a MathML tree), so split on
+// the wrappers first.
+const undefinedFlags = (html) => html
+  .split(/<(?:span|div) class="luogu-math-(?:inline|display)">/).slice(1)
+  .map((part) => /color:#cc0000/.test(visible(part)));
+
+// Display and inline math are extracted in SEPARATE passes, so the internal store
+// is grouped by type rather than by position. Rendering must still follow document
+// order or a macro defined inline is invisible to a later display formula.
+test('\\gdef crosses inline/display boundaries in both directions', () => {
+  const cases = [
+    ['inline -> inline', '$\\gdef\\dp{D}$\n\n$\\dp_i$'],
+    ['inline -> display', '$\\gdef\\dp{D}$\n\n$$\\dp_i$$'],
+    ['display -> inline', '$$\\gdef\\dp{D}$$\n\n$\\dp_i$'],
+    ['display -> display', '$$\\gdef\\dp{D}$$\n\n$$\\dp_i$$'],
+  ];
+  for (const [label, src] of cases) {
+    const html = mk().render(src);
+    assert.ok(!hasUndefined(html), `${label}: 宏未生效`);
+    assert.ok(/D/.test(mathText(html)), `${label}: 未展开成宏内容`);
+  }
+});
+
+test('ordering holds when the use precedes the definition across modes', () => {
+  // Only the use that comes BEFORE the definition may be undefined.
+  const a = mk().render('$$\\zzUse$$\n\n$\\gdef\\zzUse{Z}$');
+  assert.deepStrictEqual(undefinedFlags(a), [true, false]);
+
+  const bb = mk().render('$\\zzUse$\n\n$$\\gdef\\zzUse{Z}$$');
+  assert.deepStrictEqual(undefinedFlags(bb), [true, false]);
+
+  const c = mk().render('$\\zzUse$\n\n$$\\gdef\\zzUse{Z}$$\n\n$\\zzUse$');
+  assert.deepStrictEqual(undefinedFlags(c), [true, false, false]);
+});
+
+test('a realistic solution document resolves every macro', () => {
+  const html = mk().render([
+    '# 题解', '',
+    '$\\gdef\\O{\\mathcal{O}}\\gdef\\dp{\\mathrm{dp}}$', '',
+    '设 $\\dp_{i,j}$ 表示前 $i$ 个数，复杂度 $\\O(n^2)$。', '',
+    '## 转移', '',
+    '$$\\dp_{i,j} = \\min_{k<j}\\{\\dp_{i-1,k}\\} + w_j$$', '',
+    '总复杂度 $\\O(n^3)$。',
+  ].join('\n'));
+  assert.ok(!hasUndefined(html), '题解常见写法中出现了未定义的宏');
+});
+
 test('\\gdef reaches later formulas in the same document', () => {
   const html = mk().render('$\\gdef\\myA{ALPHA}\\myA$\n\n后续：$\\myA$');
   assert.strictEqual(mathText(html), 'ALPHA\u0001ALPHA');
