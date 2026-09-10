@@ -312,6 +312,42 @@ const SNAP = `(function(root){
     await v.close();
   }
 
+  // ---- 要求 41: \gdef 全局宏在导出件中同样生效且不越界 -----------------------------
+  {
+    const pg=await b.newPage({viewport:{width:1200,height:800}});
+    await pg.goto(url,{waitUntil:'networkidle'});
+    await pg.evaluate(()=>{const ta=document.getElementById('editorTextarea');
+      ta.value='# 宏\n\n$\\gdef\\myMac{BETA}\\myMac$\n\n引用：$\\myMac$';
+      ta.dispatchEvent(new Event('input',{bubbles:true}));
+      LuoguEditor.render();LuoguEditor.setViewMode('preview');});
+    await pg.waitForTimeout(600);
+    const readMath=()=>[...document.querySelectorAll('.katex-mathml math')].map((m)=>{
+      const c=m.cloneNode(true);
+      c.querySelectorAll('annotation').forEach((a)=>a.remove());
+      return c.textContent.trim();});
+    const prev=await pg.evaluate((f)=>eval('('+f+')')(),readMath.toString());
+    ck(JSON.stringify(prev)==='["BETA","BETA"]','预览中宏跨公式生效',JSON.stringify(prev));
+
+    const h=await pg.evaluate(async()=>{let cap=null;const OB=window.Blob;
+      window.Blob=class extends OB{constructor(a,o){super(a,o);
+        if(o&&/html/.test(o.type||''))cap=a[0];}};
+      window.showSaveFilePicker=undefined;HTMLAnchorElement.prototype.click=function(){};
+      await LuoguEditor.exportStandaloneHTML();window.Blob=OB;return cap;});
+    await pg.close();
+
+    const v=await b.newPage({viewport:{width:1200,height:800}});
+    const verr=[];v.on('pageerror',(e)=>verr.push(e.message));
+    await v.setContent(h,{waitUntil:'networkidle'});
+    await v.waitForTimeout(500);
+    const exp=await v.evaluate((f)=>eval('('+f+')')(),readMath.toString());
+    ck(JSON.stringify(exp)==='["BETA","BETA"]','导出件中宏同样展开',JSON.stringify(exp));
+    ck(!(await v.evaluate(()=>/color:#cc0000/.test(document.body.innerHTML))),
+      '导出件中没有未定义命令的红字');
+    ck(verr.length===0,'导出件无报错',verr.join(';'));
+    await v.close();
+  }
+
+
 
 
   console.log(`\n导出保真 ${pass + fail} 项，失败 ${fail}`);

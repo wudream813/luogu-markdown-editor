@@ -52,9 +52,53 @@
   // re-render on every edit), so this avoids re-tokenizing / rebuilding the DOM
   // tree for identical formulas across render() calls — cutting the main-thread
   // cost of the live preview, which was the main source of typing lag.
+  // Commands that write into the shared macro table. \gdef and \global\def survive
+  // the enclosing group, so they are the ones that reach later formulas; \def,
+  // \let and friends are listed too because KaTeX still records them on the table
+  // we hand it, which is enough to make a cached replay wrong.
+  const DEFINES_MACRO_RE =
+    /\\(?:gdef|xdef|global\s*\\(?:def|let|edef|futurelet|newcommand|renewcommand)|def|edef|let|futurelet|newcommand|renewcommand|providecommand|newenvironment|renewenvironment)\b/;
+
+  // Small, fast, non-cryptographic string hash (FNV-1a). Only used to keep cache
+  // keys short; collisions would merely reuse markup, never affect correctness of
+  // the macro table itself.
+  function hashStr(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return h.toString(36);
+  }
+
   const _katexRenderCache = new Map();
   const _katexRenderCacheMax = 4000;
-  function renderKatexCached(katexLib, formula, optsKey, opts, fallback) {
+  /**
+   * Render a formula, reusing the memoized markup when the formula AND the macro
+   * environment it is rendered in are both unchanged.
+   *
+   * `optsKey` must therefore encode the macro state: with \gdef in play the very
+   * same formula text renders differently depending on what was defined before it
+   * (`\x` may be AAA in one document and BBB in another), so a formula-only key
+   * would hand back another document's markup.
+   *
+   * A formula that *defines* macros is never cached: KaTeX applies \gdef as a side
+   * effect on the shared macro table while parsing, so replaying it from cache
+   * would skip the definition and leave later formulas undefined.
+   */
+  function renderKatexCached(katexLib, formula, optsKey, opts, fallback, opts2) {
+    const noCache = opts2 && opts2.noCache;
+    if (noCache) {
+      try {
+        return katexLib.renderToString(formula, opts);
+      } catch (e) {
+        return fallback(e);
+      }
+    }
+    return renderKatexMemo(katexLib, formula, optsKey, opts, fallback);
+  }
+
+  function renderKatexMemo(katexLib, formula, optsKey, opts, fallback) {
     // The key MUST include the formula, otherwise two different formulas that
     // share the same options (e.g. two inline equations) would collide and the
     // second would silently render as the first.
@@ -473,6 +517,27 @@
       // document size. A 133 KB document took ~6.3 s; this version takes ~0.6 s.
       const replacements = new Map();
 
+      // One macro table per render pass, shared by every formula in this document
+      // and thrown away afterwards. This is what makes \gdef reach later formulas,
+      // and equally what stops it reaching anything outside this document: a new
+      // render (or a different document) always starts from an empty table, so a
+      // definition can never leak forwards into the next preview, into the export,
+      // or into another parser instance.
+      //
+      // `globalGroup: true` is required as well — without it KaTeX unwinds the
+      // group at the end of each formula and the definition is discarded before the
+      // next one starts.
+      const docMacros = Object.create(null);
+      // Rendering must follow document order for the same reason: a macro is only
+      // visible to formulas that come after its definition. `store` is already in
+      // source order because extractMath() appends as it scans.
+      //
+      // The cache key carries a fingerprint of every definition seen so far, not a
+      // counter: a counter restarts at 1 in every document, so `\x` after the first
+      // definition of document A and of document B would share the key "m1" and the
+      // second document would be served the first one's markup.
+      let macroCtx = '';
+
       for (const item of store) {
         let rendered = '';
         if (katexLib) {
@@ -496,12 +561,23 @@
               return false;
             },
           };
+          opts.macros = docMacros;
+          opts.globalGroup = true;
+
+          // Does this formula define macros, or merely use them?
+          const defines = DEFINES_MACRO_RE.test(item.formula);
+          // Fold each defining formula into the context fingerprint, so every
+          // formula after it keys on the exact set of definitions in force.
+          if (defines) macroCtx = hashStr(macroCtx + '\u0001' + item.formula);
+
           rendered = renderKatexCached(
             katexLib,
             item.formula,
-            `${katexLib.version || 'katex'}\u0001${displayMode}\u0001htmlAndMathml\u0001trust-guarded`,
+            `${katexLib.version || 'katex'}\u0001${displayMode}\u0001htmlAndMathml`
+              + `\u0001trust-guarded\u0001${macroCtx}`,
             opts,
-            (e) => `<span class="katex-error" title="${escapeHtml(e.message)}">${escapeHtml(item.formula)}</span>`
+            (e) => `<span class="katex-error" title="${escapeHtml(e.message)}">${escapeHtml(item.formula)}</span>`,
+            { noCache: defines }
           );
         } else {
           rendered = item.type === 'display' 

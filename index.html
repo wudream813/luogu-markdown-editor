@@ -721,6 +721,16 @@
         <li><code>Tab</code> / <code>Shift + Tab</code>：增加 / 减少 4 空格缩进</li>
       </ul>
 
+      <h4 style="color:var(--luogu-blue); margin-top: 16px;">🔣 KaTeX 全局宏（<code>\gdef</code>）：</h4>
+      <ul style="padding-left: 20px; margin-top: 6px;">
+        <li>在任意公式里用 <code>\gdef\宏名{内容}</code> 定义，<b>本文档后续所有公式</b>都能使用。例如先写
+          <code>$\gdef\dp{\mathrm{dp}}$</code>，之后 <code>$\dp_i$</code> 即可。</li>
+        <li>作用范围严格限定在<b>当前文档</b>：宏不会串到下一篇文章、不会影响公式面板，
+          也不会残留到下次渲染；导出的 HTML 会带上宏的渲染结果，照常显示。</li>
+        <li>宏<b>只对定义之后的公式生效</b>，写在前面的公式不受影响；同名宏可在文中重新定义，前后各取各的值。</li>
+        <li>宏内依然受安全策略约束：<code>\href</code> 的危险协议、<code>\htmlClass</code> 等一律拦截。</li>
+      </ul>
+
       <h4 style="color:var(--luogu-blue); margin-top: 16px;">🖊️ Typora 模式（所见即所得）：</h4>
       <ul style="padding-left: 20px; margin-top: 6px;">
         <li>点击工具栏右上角的 <b>✏️ 铅笔图标</b> 进入，此时预览区就是编辑区。</li>
