@@ -2800,3 +2800,77 @@ table.luogu-tuack-table[data-tuack-col="8"] td:nth-child(8) {
   transform: rotate(-45deg);
   border-radius: 2px;
 }
+
+/* ---- Find & replace bar -----------------------------------------------------
+   Docked above the editor rather than shown as a modal: replacing text is an
+   iterative task, and a modal would cover the very matches being stepped through. */
+.find-bar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+.find-bar[hidden] { display: none; }
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+.find-input:focus {
+  outline: none;
+  border-color: var(--luogu-blue);
+  box-shadow: 0 0 0 2px var(--luogu-blue-light, rgba(52, 152, 219, .25));
+}
+.find-count {
+  flex: none;
+  min-width: 52px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.find-btn {
+  flex: none;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.find-btn:hover { border-color: var(--luogu-blue); color: var(--luogu-blue); }
+.find-btn-wide { min-width: 46px; }
+.find-close { font-size: 18px; }
+.find-opts { flex-wrap: wrap; gap: 12px; }
+.find-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.find-opt input { cursor: pointer; }
+.find-error {
+  font-size: 12px;
+  color: var(--luogu-red, #e74c3c);
+}

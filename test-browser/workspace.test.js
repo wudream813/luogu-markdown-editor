@@ -154,6 +154,115 @@ const { chromium } = require('playwright');
   ck(save.second.download === 0, '不退化为浏览器下载');
   ck(save.third.picker === 2, '解除关联后重新弹出另存为', `picker=${save.third.picker}`);
 
+  // ---- 要求 43: 查找 / 替换 -------------------------------------------------------
+  {
+    const setDoc = async (md) => {
+      await p.evaluate((v) => {
+        const ta = document.getElementById('editorTextarea');
+        ta.value = v; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        LuoguEditor.render(); LuoguEditor.setViewMode('split');
+      }, md);
+      await p.evaluate(() => document.getElementById('editorTextarea').focus());
+      await p.waitForTimeout(300);
+    };
+    const cnt = () => p.evaluate(() => document.getElementById('findCount').textContent);
+    const open = () => p.evaluate(() => !document.getElementById('findBar').hidden);
+    const setFind = async (q, r) => {
+      await p.evaluate(([a, bb]) => {
+        const fi = document.getElementById('findInput');
+        fi.value = a; fi.dispatchEvent(new Event('input', { bubbles: true }));
+        if (bb !== null) document.getElementById('replaceInput').value = bb;
+      }, [q, r === undefined ? null : r]);
+      await p.waitForTimeout(220);
+    };
+    const setOpt = async (id, on) => {
+      await p.evaluate(([i, v]) => {
+        const el = document.getElementById(i);
+        el.checked = v; el.dispatchEvent(new Event('change', { bubbles: true }));
+      }, [id, on]);
+      await p.waitForTimeout(220);
+    };
+
+    await setDoc('alpha beta alpha gamma ALPHA');
+    await p.keyboard.press('Control+f');
+    await p.waitForTimeout(300);
+    ck(await open(), 'Ctrl+F 打开查找栏');
+    await setFind('alpha');
+    ck((await cnt()) === '1/3', '默认忽略大小写找到 3 处', await cnt());
+    await setOpt('findCase', true);
+    ck((await cnt()) === '1/2', '区分大小写生效', await cnt());
+    await setOpt('findCase', false);
+
+    await p.evaluate(() => LuoguEditor.findNext());
+    await p.waitForTimeout(200);
+    ck((await cnt()) === '2/3', '下一个');
+    await p.evaluate(() => { LuoguEditor.findNext(); LuoguEditor.findNext(); });
+    await p.waitForTimeout(200);
+    ck((await cnt()) === '1/3', '到末尾后循环回第一个', await cnt());
+    await p.evaluate(() => LuoguEditor.findPrev());
+    await p.waitForTimeout(200);
+    ck((await cnt()) === '3/3', '上一个可反向循环', await cnt());
+
+    ck(await p.evaluate(() => {
+      const ta = document.getElementById('editorTextarea');
+      return ta.value.slice(ta.selectionStart, ta.selectionEnd).toLowerCase() === 'alpha';
+    }), '当前匹配在源码中被选中');
+
+    // 替换
+    await setDoc('cat dog cat bird cat');
+    await p.evaluate(() => LuoguEditor.openFind(true));
+    await p.waitForTimeout(250);
+    await setFind('cat', 'fox');
+    await p.evaluate(() => LuoguEditor.replaceOne());
+    await p.waitForTimeout(350);
+    ck((await src()) === 'fox dog cat bird cat', '替换单个', JSON.stringify(await src()));
+    await p.evaluate(() => LuoguEditor.replaceAll());
+    await p.waitForTimeout(400);
+    ck((await src()) === 'fox dog fox bird fox', '替换全部', JSON.stringify(await src()));
+    await p.evaluate(() => LuoguEditor.undo());
+    await p.waitForTimeout(350);
+    ck((await src()) === 'fox dog cat bird cat', '替换可被 Ctrl+Z 撤销', JSON.stringify(await src()));
+
+    // 元字符按字面处理：搜 "$x^2$" 不能被当成正则
+    await setDoc('公式 $x^2$ 与 $x^2$ 两处');
+    await setFind('$x^2$', 'Y');
+    ck((await cnt()) === '1/2', '含正则元字符的查询按字面匹配', await cnt());
+    await p.evaluate(() => LuoguEditor.replaceAll());
+    await p.waitForTimeout(350);
+    ck((await src()) === '公式 Y 与 Y 两处', '字面替换正确', JSON.stringify(await src()));
+
+    // 正则 + 分组引用
+    await setDoc('a1 b2 c3');
+    await setOpt('findRegex', true);
+    await setFind('([a-z])(\\d)', '$2$1');
+    ck((await cnt()) === '1/3', '正则匹配 3 处', await cnt());
+    await p.evaluate(() => LuoguEditor.replaceAll());
+    await p.waitForTimeout(350);
+    ck((await src()) === '1a 2b 3c', '$1/$2 分组引用生效', JSON.stringify(await src()));
+
+    // 非法正则提示、空匹配不死循环
+    await setFind('([', '');
+    ck((await p.evaluate(() => document.getElementById('findError').textContent)).includes('正则无效'),
+      '非法正则给出提示');
+    await setDoc('aaa');
+    await setFind('a*', 'X');
+    ck((await cnt()) !== '0/0', '可匹配空串的模式不死循环', await cnt());
+    await setOpt('findRegex', false);
+
+    // 全词匹配
+    await setDoc('dp dpx xdp dp');
+    await setOpt('findWord', true);
+    await setFind('dp');
+    ck((await cnt()) === '1/2', '全词匹配排除 dpx / xdp', await cnt());
+    await setOpt('findWord', false);
+
+    await p.evaluate(() => document.getElementById('findInput').focus());
+    await p.keyboard.press('Escape');
+    await p.waitForTimeout(250);
+    ck(!(await open()), 'Esc 关闭查找栏');
+  }
+
+
   ck(errs.length === 0, '无 JS 报错', errs.join(' | '));
   console.log(`\n工作区 ${pass + fail} 项，失败 ${fail}`);
   await b.close();

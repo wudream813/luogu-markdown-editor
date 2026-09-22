@@ -479,11 +479,21 @@
       // CJK ones, which broke valid formulas like $设x=1$. Guessing is the wrong job for
       // a renderer: the linter now raises a "中文不宜放在公式中" warning instead, so the
       // author is told about it while still seeing exactly what they wrote.
-      text = text.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, (match, prefix, formula) => {
+      // A formula may wrap onto the next line: remark-math's inline math spans
+      // multiple lines *within one paragraph*, which is how a `\begin{cases}` block
+      // is normally written inside `$...$`. Newlines are therefore allowed between
+      // the delimiters, but a BLANK line is not: that ends the paragraph, and
+      // pairing across it would let one stray `$` swallow the rest of the document
+      // (the same failure mode the `$$` fence rules exist to prevent).
+      text = text.replace(/(^|[^\\])\$((?:[^\$\n]|\n(?![ \t]*\n))+?)\$/g, (match, prefix, formula) => {
         const f = formula.trim();
         if (!f) return match;
 
         const id = `LUOGUMATHINLINE${mathIdx++}END`;
+        // Keep the placeholder on one line but let parseBlocks know how many source
+        // lines it stood for, so line anchors (scroll sync, Typora) stay aligned.
+        const spanned = match.split('\n').length;
+        if (spanned > 1) this._tokenLines.set(id, spanned);
         store.push({ id, type: 'inline', formula: f });
         return prefix + id;
       });

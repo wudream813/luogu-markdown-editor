@@ -638,6 +638,33 @@ test('GFM footnotes', () => {
   assert.doesNotMatch(render('文字\n\n[^1]: 未被引用'), /luogu-footnotes/);
 });
 
+// ------------------------------- Inline math may wrap onto the next line
+//
+// remark-math (what Luogu renders with) allows inline `$...$` to span multiple
+// lines inside one paragraph. Our regex used to forbid newlines outright, so a
+// perfectly ordinary multi-line `\begin{cases}` written inside `$...$` fell through
+// as literal text.
+
+test('inline $...$ may span lines within a paragraph', () => {
+  const src = '$F(n)=\\sum_{d\\mid n} \\mu(d)=\\begin{cases}\n1 & n=1 \\\\\n0 & n>1\n\\end{cases}$';
+  const h = render(src);
+  assert.match(h, /luogu-math-inline/);
+  // Nothing may be left over as literal source text.
+  assert.doesNotMatch(h, /<p[^>]*>[^<]*\\begin\{cases\}/);
+});
+
+test('inline math still stops at a blank line', () => {
+  // Pairing across a paragraph break would let one stray `$` swallow the document.
+  assert.doesNotMatch(render('$a\n\nb$'), /luogu-math-inline/);
+  assert.doesNotMatch(render('单个 $ 符号\n\n另一段\n\n再一段'), /luogu-math-inline/);
+});
+
+test('multi-line inline math does not disturb code or escapes', () => {
+  assert.doesNotMatch(render('```\n$a\nb$\n```'), /luogu-math/);
+  assert.doesNotMatch(render('`$a$`'), /luogu-math/);
+  assert.doesNotMatch(render('\\$5 到 \\$10'), /luogu-math-inline/);
+});
+
 // ------------------------------- Display math is a line-based fence
 //
 // Luogu renders with remark-math, where `$$` is a line-based fence rather than a

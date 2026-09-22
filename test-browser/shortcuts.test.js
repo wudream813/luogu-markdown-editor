@@ -92,6 +92,35 @@ const CASES = [
 
   if (errors.length) { fail++; console.log('  ❌ 页面报错:', errors.slice(0, 3)); }
 
+  // 查找/替换键不得吞掉同字母的 Shift 组合（Ctrl+H vs Ctrl+Shift+H 水平线）
+  {
+    const readSrc = () => page.evaluate(() => document.getElementById('editorTextarea').value);
+    const barHidden = () => page.evaluate(() => {
+      const el = document.getElementById('findBar');
+      return !el || el.hidden;
+    });
+    await page.evaluate(() => {
+      const ta = document.getElementById('editorTextarea');
+      ta.value = ''; ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus();
+    });
+    await page.keyboard.press('Control+Shift+h');
+    await page.waitForTimeout(250);
+    const hr = await readSrc();
+    if (/^---$/m.test(hr)) { pass++; console.log('  ✅ Ctrl+Shift+H 仍插入水平线'); }
+    else { fail++; console.log('  ❌ Ctrl+Shift+H 被查找替换吞掉:', JSON.stringify(hr)); }
+
+    if (await barHidden()) { pass++; console.log('  ✅ Ctrl+Shift+H 不会打开查找栏'); }
+    else { fail++; console.log('  ❌ Ctrl+Shift+H 误开了查找栏'); }
+
+    await page.keyboard.press('Control+h');
+    await page.waitForTimeout(250);
+    if (!(await barHidden())) { pass++; console.log('  ✅ Ctrl+H 打开查找替换栏'); }
+    else { fail++; console.log('  ❌ Ctrl+H 未打开查找替换栏'); }
+    await page.evaluate(() => LuoguEditor.closeFind());
+    await page.waitForTimeout(150);
+  }
+
+
   console.log(`\n快捷键 ${pass + fail} 项，失败 ${fail}`);
   await browser.close();
   process.exit(fail ? 1 : 0);

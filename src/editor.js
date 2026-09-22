@@ -193,6 +193,34 @@ const safeStorage = {
       // Keyboard shortcuts
       this.textarea.addEventListener('keydown', (e) => this.handleKeyDown(e));
 
+      // Find bar: live search as you type, Enter / Shift+Enter to step, Esc to close.
+      const findInput = document.getElementById('findInput');
+      const replaceInput = document.getElementById('replaceInput');
+      if (findInput) {
+        findInput.addEventListener('input', () => this.runFind());
+        findInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (e.shiftKey) this.findPrev(); else this.findNext();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            this.closeFind();
+          }
+        });
+      }
+      if (replaceInput) {
+        replaceInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            // Ctrl+Enter replaces everything; plain Enter replaces just this one.
+            if (e.ctrlKey || e.metaKey) this.replaceAll(); else this.replaceOne();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            this.closeFind();
+          }
+        });
+      }
+
       // Doc name input
       if (this.docNameInput) {
         this.docNameInput.addEventListener('change', (e) => {
@@ -683,6 +711,19 @@ const safeStorage = {
       const isCtrl = e.ctrlKey || e.metaKey;
 
       if (isCtrl) {
+        // Ctrl+F is Luogu's documented search key; Ctrl+H adds replace.
+        if (e.key === 'f' || e.key === 'F') {
+          e.preventDefault();
+          this.openFind(false);
+          return;
+        }
+        // Shift must be excluded: Ctrl+Shift+H is Luogu's horizontal-rule key and is
+        // handled further down. Without this guard, replace swallowed it.
+        if ((e.key === 'h' || e.key === 'H') && !e.shiftKey) {
+          e.preventDefault();
+          this.openFind(true);
+          return;
+        }
         if (e.key === 's' || e.key === 'S') {
           e.preventDefault();
           // Fire-and-forget: it is async now (may await a file picker).
@@ -1379,6 +1420,181 @@ const safeStorage = {
       this.render();
       this.updateLineNumbers();
       this.autoSave();
+    }
+
+    // ---- Find & replace ------------------------------------------------------
+    //
+    // Operates on the Markdown source in the textarea, not on the rendered preview:
+    // that is what the author actually edits, and it keeps "replace" a plain string
+    // edit instead of a DOM rewrite that would have to be mapped back to source.
+
+    openFind(withReplace) {
+      const bar = document.getElementById('findBar');
+      const input = document.getElementById('findInput');
+      if (!bar || !input) return;
+      bar.hidden = false;
+      // Seed the box with the current selection, the way most editors do.
+      const sel = this.textarea
+        ? this.textarea.value.slice(this.textarea.selectionStart, this.textarea.selectionEnd)
+        : '';
+      if (sel && !sel.includes('\n')) input.value = sel;
+      this.runFind();
+      const focusEl = withReplace ? document.getElementById('replaceInput') : input;
+      if (focusEl) { focusEl.focus(); focusEl.select(); }
+    }
+
+    closeFind() {
+      const bar = document.getElementById('findBar');
+      if (bar) bar.hidden = true;
+      this._findMatches = null;
+      if (this.textarea) this.textarea.focus();
+    }
+
+    isFindOpen() {
+      const bar = document.getElementById('findBar');
+      return !!bar && !bar.hidden;
+    }
+
+    /** Build the search regex from the query and the option checkboxes, or null. */
+    _findRegex() {
+      const q = (document.getElementById('findInput') || {}).value || '';
+      const err = document.getElementById('findError');
+      if (err) err.textContent = '';
+      if (!q) return null;
+
+      const useRe = !!(document.getElementById('findRegex') || {}).checked;
+      const caseSensitive = !!(document.getElementById('findCase') || {}).checked;
+      const wholeWord = !!(document.getElementById('findWord') || {}).checked;
+
+      // A literal query must have every metacharacter escaped, otherwise searching
+      // for "$x^2$" would be interpreted as a pattern and match nothing (or throw).
+      let body = useRe ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // \b is ASCII-only, so it never fires between CJK characters; spell the
+      // boundary out to include the CJK range.
+      if (wholeWord) body = '(?<![\\w\\u4e00-\\u9fa5])(?:' + body + ')(?![\\w\\u4e00-\\u9fa5])';
+
+      try {
+        return new RegExp(body, caseSensitive ? 'gm' : 'gim');
+      } catch (e) {
+        if (err) err.textContent = '正则无效：' + e.message;
+        return null;
+      }
+    }
+
+    /** Recompute all matches and reveal the current one. */
+    runFind(keepIndex) {
+      if (!this.isFindOpen() || !this.textarea) return;
+      const re = this._findRegex();
+      const countEl = document.getElementById('findCount');
+      const text = this.textarea.value;
+      const matches = [];
+
+      if (re) {
+        let m;
+        let guard = 0;
+        while ((m = re.exec(text)) !== null) {
+          matches.push({ start: m.index, end: m.index + m[0].length });
+          // A pattern that can match the empty string (e.g. `a*`) never advances
+          // lastIndex by itself and would spin forever.
+          if (m[0].length === 0) re.lastIndex++;
+          if (++guard > 100000) break;
+        }
+      }
+
+      this._findMatches = matches;
+      if (!keepIndex || this._findIndex == null || this._findIndex >= matches.length) {
+        // Start from the first match at or after the caret, so opening the bar
+        // continues from where the author is rather than from the top.
+        const caret = this.textarea.selectionStart;
+        let at = -1;
+        for (let i = 0; i < matches.length; i++) {
+          if (matches[i].start >= caret) { at = i; break; }
+        }
+        this._findIndex = matches.length ? (at === -1 ? 0 : at) : -1;
+      }
+      if (countEl) {
+        countEl.textContent = matches.length
+          ? (this._findIndex + 1) + '/' + matches.length : '0/0';
+      }
+      if (matches.length) this._revealMatch();
+    }
+
+    _revealMatch() {
+      const m = (this._findMatches || [])[this._findIndex];
+      if (!m || !this.textarea) return;
+      this.textarea.setSelectionRange(m.start, m.end);
+      // Scrolling is manual: setSelectionRange does not move a textarea that is
+      // already scrolled somewhere else.
+      const line = this.textarea.value.slice(0, m.start).split('\n').length - 1;
+      const lineH = parseFloat(getComputedStyle(this.textarea).lineHeight) || 21;
+      const target = line * lineH;
+      const view = this.textarea.clientHeight;
+      if (target < this.textarea.scrollTop
+        || target > this.textarea.scrollTop + view - lineH * 2) {
+        this.textarea.scrollTop = Math.max(0, target - view / 2);
+      }
+      this.updateGutterScroll();
+    }
+
+    _stepFind(delta) {
+      if (!this.isFindOpen()) return;
+      const n = (this._findMatches || []).length;
+      if (!n) return;
+      this._findIndex = ((this._findIndex + delta) % n + n) % n;   // wraps both ways
+      const countEl = document.getElementById('findCount');
+      if (countEl) countEl.textContent = (this._findIndex + 1) + '/' + n;
+      this._revealMatch();
+    }
+
+    findNext() { this._stepFind(1); }
+    findPrev() { this._stepFind(-1); }
+
+    /** Replacement text, honouring $1..$9 group references in regex mode. */
+    _expandReplacement(matchText) {
+      const rep = (document.getElementById('replaceInput') || {}).value || '';
+      if (!(document.getElementById('findRegex') || {}).checked) return rep;
+      const re = this._findRegex();
+      if (!re) return rep;
+      // Re-run on this match alone so the capture groups belong to it.
+      const one = new RegExp(re.source, re.flags.replace('g', ''));
+      const m = one.exec(matchText);
+      if (!m) return rep;
+      return rep.replace(/\$(\d)/g, (s, d) => (m[+d] !== undefined ? m[+d] : s));
+    }
+
+    replaceOne() {
+      if (!this.isFindOpen() || !this.textarea) return;
+      const m = (this._findMatches || [])[this._findIndex];
+      if (!m) return;
+      const text = this.textarea.value;
+      const rep = this._expandReplacement(text.slice(m.start, m.end));
+      // setContent(), not textarea.value: it pushes an undo entry (so Ctrl+Z reverts
+      // the replacement), re-renders the preview and schedules autosave.
+      this.setContent(text.slice(0, m.start) + rep + text.slice(m.end));
+      const caret = m.start + rep.length;
+      this.textarea.setSelectionRange(caret, caret);
+      this._findIndex = null;
+      this.runFind();
+    }
+
+    replaceAll() {
+      if (!this.isFindOpen() || !this.textarea) return;
+      const matches = this._findMatches || [];
+      if (!matches.length) return;
+      const text = this.textarea.value;
+      // Walk backwards so each splice leaves the earlier offsets valid.
+      let out = text;
+      for (let i = matches.length - 1; i >= 0; i--) {
+        const m = matches[i];
+        out = out.slice(0, m.start)
+          + this._expandReplacement(text.slice(m.start, m.end))
+          + out.slice(m.end);
+      }
+      const n = matches.length;
+      this.setContent(out);
+      this._findIndex = null;
+      this.runFind();
+      if (this.showToast) this.showToast('已替换 ' + n + ' 处', 'success');
     }
 
     /**

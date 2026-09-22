@@ -289,6 +289,26 @@
         <span>MARKDOWN 源代码</span>
         <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">支持洛谷扩展语法 & KaTeX</span>
       </div>
+      <div id="findBar" class="find-bar" hidden>
+        <div class="find-row">
+          <input type="text" id="findInput" class="find-input" placeholder="查找" aria-label="查找内容" spellcheck="false" />
+          <span id="findCount" class="find-count" aria-live="polite">0/0</span>
+          <button class="find-btn" onclick="LuoguEditor.findPrev()" title="上一个 (Shift+Enter)" aria-label="上一个">↑</button>
+          <button class="find-btn" onclick="LuoguEditor.findNext()" title="下一个 (Enter)" aria-label="下一个">↓</button>
+          <button class="find-btn find-close" onclick="LuoguEditor.closeFind()" title="关闭 (Esc)" aria-label="关闭">&times;</button>
+        </div>
+        <div class="find-row">
+          <input type="text" id="replaceInput" class="find-input" placeholder="替换为" aria-label="替换内容" spellcheck="false" />
+          <button class="find-btn find-btn-wide" onclick="LuoguEditor.replaceOne()" title="替换当前匹配">替换</button>
+          <button class="find-btn find-btn-wide" onclick="LuoguEditor.replaceAll()" title="替换全部匹配">全部</button>
+        </div>
+        <div class="find-row find-opts">
+          <label class="find-opt"><input type="checkbox" id="findCase" onchange="LuoguEditor.runFind()" /> 区分大小写</label>
+          <label class="find-opt"><input type="checkbox" id="findWord" onchange="LuoguEditor.runFind()" /> 全词匹配</label>
+          <label class="find-opt"><input type="checkbox" id="findRegex" onchange="LuoguEditor.runFind()" /> 正则</label>
+          <span id="findError" class="find-error"></span>
+        </div>
+      </div>
       <div class="editor-wrapper">
         <div class="gutter-stack">
           <div id="lineNumbersGutter" class="line-numbers-gutter"></div>
@@ -714,6 +734,8 @@
         <li><code>Ctrl + Shift + 8</code>：插入有序列表　<b>洛谷</b></li>
         <li><code>Ctrl + Shift + 9</code>：插入任务列表　<b>洛谷</b></li>
         <li><code>Ctrl + Shift + ↑</code> / <code>Ctrl + Shift + ↓</code>：提升 / 降低标题等级（H1～H6，段落⇄标题）　<b>洛谷</b></li>
+        <li><code>Ctrl + F</code>：查找　<b>洛谷</b>；<code>Ctrl + H</code>：查找并替换　<span style="opacity:.7">（本编辑器特有）</span>
+          <br /><span style="opacity:.7">查找框内 <code>Enter</code> / <code>Shift+Enter</code> 跳下一个 / 上一个，替换框内 <code>Enter</code> 替换当前、<code>Ctrl+Enter</code> 全部替换，<code>Esc</code> 关闭；支持区分大小写、全词匹配、正则（<code>$1</code>～<code>$9</code> 引用分组）。替换可用 <code>Ctrl+Z</code> 撤销。</span></li>
         <li><code>Ctrl + S</code>：保存 Markdown 到本地　<span style="opacity:.7">（本编辑器特有）</span></li>
         <li><code>Ctrl + K</code> / <code>Ctrl + Shift + K</code>：插入超链接 / 行内公式　<span style="opacity:.7">（本编辑器旧键，仍可用）</span></li>
         <li><code>Ctrl + Shift + M</code>：插入行间数学公式 <code>$$</code>　<span style="opacity:.7">（本编辑器特有）</span></li>
