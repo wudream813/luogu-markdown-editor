@@ -384,6 +384,85 @@ const { chromium } = require('playwright');
     await p.waitForTimeout(200);
   }
 
+  // ---- 要求 45: 查找栏内 Ctrl+Z 必须撤销文档（而非输入框自己的历史）----------------
+  {
+    const freshDoc = async (md) => {
+      await p.evaluate((v) => {
+        const ta = document.getElementById('editorTextarea');
+        LuoguEditor.undoStack = []; LuoguEditor.redoStack = [];
+        ta.value = v; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        LuoguEditor.render(); LuoguEditor.setViewMode('split');
+        ta.focus(); ta.setSelectionRange(0, 0);
+      }, md);
+      await p.waitForTimeout(550);
+    };
+    const openRep = async (q, r) => {
+      await p.evaluate(() => LuoguEditor.openFind(true));
+      await p.waitForTimeout(200);
+      await p.evaluate(([a, bb]) => {
+        const fi = document.getElementById('findInput');
+        fi.value = a; fi.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('replaceInput').value = bb;
+      }, [q, r]);
+      await p.waitForTimeout(240);
+    };
+    const focusId = () => p.evaluate(() => document.activeElement.id || document.activeElement.tagName);
+
+    // 替换之后焦点本就停在替换框里，此前 Ctrl+Z 被输入框自身的撤销栈吃掉，
+    // 表现为"替换撤不回来"。
+    await freshDoc('cat cat cat cat cat');
+    await openRep('cat', 'fox');
+    await p.evaluate(() => document.getElementById('replaceInput').focus());
+    for (let i = 0; i < 4; i++) { await p.keyboard.press('Enter'); await p.waitForTimeout(230); }
+    ck((await src()) === 'fox fox fox fox cat', '替换框内连按 Enter 替换 4 处',
+      JSON.stringify(await src()));
+    for (let i = 0; i < 4; i++) { await p.keyboard.press('Control+z'); await p.waitForTimeout(250); }
+    ck((await src()) === 'cat cat cat cat cat', '替换框内 Ctrl+Z 可逐条撤回',
+      JSON.stringify(await src()));
+    ck((await focusId()) === 'replaceInput', '撤销不把焦点抢回编辑区', await focusId());
+
+    await freshDoc('dog dog dog');
+    await openRep('dog', 'pig');
+    await p.evaluate(() => LuoguEditor.replaceOne());
+    await p.waitForTimeout(280);
+    await p.evaluate(() => document.getElementById('findInput').focus());
+    await p.keyboard.press('Control+z');
+    await p.waitForTimeout(280);
+    ck((await src()) === 'dog dog dog', '查找框内 Ctrl+Z 同样生效', JSON.stringify(await src()));
+    await p.keyboard.press('Control+y');
+    await p.waitForTimeout(280);
+    ck((await src()) === 'pig dog dog', '查找框内 Ctrl+Y 可重做', JSON.stringify(await src()));
+
+    // 撤销改变了文本，高亮与计数必须跟着重算
+    await freshDoc('cat cat cat');
+    await openRep('cat', 'fox');
+    await p.evaluate(() => document.getElementById('replaceInput').focus());
+    await p.keyboard.press('Enter');
+    await p.waitForTimeout(280);
+    await p.keyboard.press('Control+z');
+    await p.waitForTimeout(330);
+    const st = await p.evaluate(() => ({
+      marks: document.querySelectorAll('#findHighlights mark').length,
+      cnt: document.getElementById('findCount').textContent,
+    }));
+    ck(st.marks === 3, '撤销后高亮重新标出全部匹配', JSON.stringify(st));
+    ck(st.cnt.endsWith('/3'), '撤销后计数同步', JSON.stringify(st));
+
+    // 整批替换只占一条历史，一次即可撤回
+    await freshDoc('a a a a a a a a');
+    await openRep('a', 'b');
+    await p.evaluate(() => LuoguEditor.replaceAll(true));
+    await p.waitForTimeout(380);
+    await p.evaluate(() => document.getElementById('replaceInput').focus());
+    await p.keyboard.press('Control+z');
+    await p.waitForTimeout(330);
+    ck((await src()) === 'a a a a a a a a', '全部替换可一次撤回', JSON.stringify(await src()));
+
+    await p.evaluate(() => LuoguEditor.closeFind());
+    await p.waitForTimeout(200);
+  }
+
+
 
 
   ck(errs.length === 0, '无 JS 报错', errs.join(' | '));

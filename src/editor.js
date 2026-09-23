@@ -203,9 +203,30 @@ const safeStorage = {
       // Find bar: live search as you type, Enter / Shift+Enter to step, Esc to close.
       const findInput = document.getElementById('findInput');
       const replaceInput = document.getElementById('replaceInput');
+      // Undo/redo must keep working while the caret sits in the find or replace box.
+      // Those are ordinary <input>s, so the browser would apply *their* own undo
+      // stack (usually empty) and the document edit would appear un-undoable — the
+      // exact symptom of "Ctrl+Z cannot take back my replacements", since after a
+      // replace the focus is still in the replace box.
+      const docUndoKeys = (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return false;
+        if (e.key === 'z' || e.key === 'Z') {
+          e.preventDefault();
+          if (e.shiftKey) this.redo(); else this.undo();
+          return true;
+        }
+        if (e.key === 'y' || e.key === 'Y') {
+          e.preventDefault();
+          this.redo();
+          return true;
+        }
+        return false;
+      };
+
       if (findInput) {
         findInput.addEventListener('input', () => this.runFind());
         findInput.addEventListener('keydown', (e) => {
+          if (docUndoKeys(e)) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             if (e.shiftKey) this.findPrev(); else this.findNext();
@@ -217,6 +238,7 @@ const safeStorage = {
       }
       if (replaceInput) {
         replaceInput.addEventListener('keydown', (e) => {
+          if (docUndoKeys(e)) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             // Ctrl+Enter replaces everything; plain Enter replaces just this one.
@@ -996,11 +1018,19 @@ const safeStorage = {
       }
 
       this.textarea.setSelectionRange(pos, pos);
-      this.textarea.focus();
+      // Undo triggered from the find/replace boxes must not steal the caret out of
+      // them: the reader is mid-task there and would have to click back for every
+      // single undo. Only grab focus when it is not already in the find bar.
+      const inFindBar = document.activeElement
+        && document.activeElement.closest
+        && document.activeElement.closest('#findBar');
+      if (!inFindBar) this.textarea.focus();
       this.scrollCaretIntoView();
       this.render();
       this.updateLineNumbers();
       this.autoSave();
+      // Matches shifted with the text, so the painted boxes are stale.
+      if (this.isFindOpen && this.isFindOpen()) this.runFind();
     }
 
     // Ensure the caret's line is visible after a programmatic value change.
