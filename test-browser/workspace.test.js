@@ -216,7 +216,7 @@ const { chromium } = require('playwright');
     await p.evaluate(() => LuoguEditor.replaceOne());
     await p.waitForTimeout(350);
     ck((await src()) === 'fox dog cat bird cat', '替换单个', JSON.stringify(await src()));
-    await p.evaluate(() => LuoguEditor.replaceAll());
+    await p.evaluate(() => LuoguEditor.replaceAll(true));   // force：跳过二次确认
     await p.waitForTimeout(400);
     ck((await src()) === 'fox dog fox bird fox', '替换全部', JSON.stringify(await src()));
     await p.evaluate(() => LuoguEditor.undo());
@@ -227,7 +227,7 @@ const { chromium } = require('playwright');
     await setDoc('公式 $x^2$ 与 $x^2$ 两处');
     await setFind('$x^2$', 'Y');
     ck((await cnt()) === '1/2', '含正则元字符的查询按字面匹配', await cnt());
-    await p.evaluate(() => LuoguEditor.replaceAll());
+    await p.evaluate(() => LuoguEditor.replaceAll(true));   // force：跳过二次确认
     await p.waitForTimeout(350);
     ck((await src()) === '公式 Y 与 Y 两处', '字面替换正确', JSON.stringify(await src()));
 
@@ -236,7 +236,7 @@ const { chromium } = require('playwright');
     await setOpt('findRegex', true);
     await setFind('([a-z])(\\d)', '$2$1');
     ck((await cnt()) === '1/3', '正则匹配 3 处', await cnt());
-    await p.evaluate(() => LuoguEditor.replaceAll());
+    await p.evaluate(() => LuoguEditor.replaceAll(true));   // force：跳过二次确认
     await p.waitForTimeout(350);
     ck((await src()) === '1a 2b 3c', '$1/$2 分组引用生效', JSON.stringify(await src()));
 
@@ -261,6 +261,129 @@ const { chromium } = require('playwright');
     await p.waitForTimeout(250);
     ck(!(await open()), 'Esc 关闭查找栏');
   }
+
+  // ---- 要求 44: 匹配高亮 + 全部替换需二次确认 --------------------------------------
+  {
+    const setDoc2 = async (md) => {
+      await p.evaluate((v) => {
+        const ta = document.getElementById('editorTextarea');
+        ta.value = v; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        LuoguEditor.render(); LuoguEditor.setViewMode('split');
+        ta.focus(); ta.setSelectionRange(0, 0);
+      }, md);
+      await p.waitForTimeout(300);
+    };
+    const find2 = async (q, r) => {
+      await p.evaluate(([a, bb]) => {
+        const fi = document.getElementById('findInput');
+        fi.value = a; fi.dispatchEvent(new Event('input', { bubbles: true }));
+        if (bb !== null) document.getElementById('replaceInput').value = bb;
+      }, [q, r === undefined ? null : r]);
+      await p.waitForTimeout(260);
+    };
+    const marks = () => p.evaluate(() => {
+      const l = document.getElementById('findHighlights');
+      return {
+        total: l.querySelectorAll('mark').length,
+        current: l.querySelectorAll('mark.is-current').length,
+        texts: [...l.querySelectorAll('mark')].map((m) => m.textContent),
+      };
+    });
+    const allBtn = () => p.evaluate(() => {
+      const el = document.getElementById('replaceAllBtn');
+      return { text: el.textContent.trim(), armed: el.classList.contains('is-armed') };
+    });
+
+    // --- 高亮 ---
+    await setDoc2('alpha beta alpha gamma alpha');
+    await p.evaluate(() => LuoguEditor.openFind(false));
+    await p.waitForTimeout(220);
+    await find2('alpha');
+    let mk = await marks();
+    ck(mk.total === 3, '所有匹配都被高亮', JSON.stringify(mk));
+    ck(mk.current === 1, '当前匹配唯一标记', JSON.stringify(mk));
+    ck(mk.texts.every((t) => t === 'alpha'), '高亮的是匹配文本本身', JSON.stringify(mk.texts));
+
+    await p.evaluate(() => LuoguEditor.findNext());
+    await p.waitForTimeout(240);
+    ck(await p.evaluate(() => [...document.querySelectorAll('#findHighlights mark')]
+      .findIndex((x) => x.classList.contains('is-current'))) === 1,
+      '跳转时当前高亮随之移动');
+
+    // 层与文本框度量必须一致，否则高亮会错位
+    ck(await p.evaluate(() => {
+      const cs = (el) => { const s = getComputedStyle(el);
+        return [s.fontFamily, s.fontSize, s.lineHeight, s.paddingTop, s.paddingLeft,
+          s.paddingBottom, s.whiteSpace, s.tabSize].join('|'); };
+      return cs(document.getElementById('findHighlights'))
+        === cs(document.getElementById('editorTextarea'));
+    }), '高亮层与编辑区度量一致（不错位）');
+    ck(await p.evaluate(() =>
+      getComputedStyle(document.getElementById('findHighlights')).pointerEvents === 'none'),
+      '高亮层不拦截鼠标');
+
+    // 滚动跟随
+    await setDoc2(Array.from({ length: 200 }, (_, i) => `第 ${i} 行 target`).join('\n'));
+    await p.evaluate(() => LuoguEditor.openFind(false));
+    await find2('target');
+    await p.evaluate(() => {
+      const ta = document.getElementById('editorTextarea');
+      ta.scrollTop = 800; ta.dispatchEvent(new Event('scroll'));
+    });
+    await p.waitForTimeout(280);
+    ck(await p.evaluate(() => Math.abs(
+      document.getElementById('editorTextarea').scrollTop
+      - document.getElementById('findHighlights').scrollTop) <= 1),
+      '滚动时高亮层同步');
+
+    await p.evaluate(() => LuoguEditor.closeFind());
+    await p.waitForTimeout(220);
+    ck((await marks()).total === 0, '关闭查找后清除高亮');
+
+    // --- 全部替换的二次确认 ---
+    await setDoc2('cat dog cat bird cat');
+    await p.evaluate(() => LuoguEditor.openFind(true));
+    await p.waitForTimeout(200);
+    await find2('cat', 'fox');
+    await p.click('#replaceAllBtn');
+    await p.waitForTimeout(320);
+    ck((await src()) === 'cat dog cat bird cat', '第一次点「全部」不改动文档',
+      JSON.stringify(await src()));
+    const armed = await allBtn();
+    ck(armed.armed && /3/.test(armed.text), '按钮进入确认态并显示处数', JSON.stringify(armed));
+    await p.click('#replaceAllBtn');
+    await p.waitForTimeout(380);
+    ck((await src()) === 'fox dog fox bird fox', '第二次点击才执行替换',
+      JSON.stringify(await src()));
+    ck((await allBtn()).text === '全部', '执行后按钮复位');
+
+    // 确认态必须随上下文失效，避免"确认"落到别的查询上
+    await setDoc2('cat cat');
+    await p.evaluate(() => LuoguEditor.openFind(true));
+    await find2('cat', 'fox');
+    await p.click('#replaceAllBtn');
+    await p.waitForTimeout(240);
+    await find2('dog', 'fox');
+    ck(!(await allBtn()).armed, '更改查询会解除确认态');
+    await find2('cat', 'fox');
+    await p.click('#replaceAllBtn');
+    await p.waitForTimeout(240);
+    await p.evaluate(() => LuoguEditor.closeFind());
+    await p.waitForTimeout(220);
+    ck(!(await allBtn()).armed, '关闭查找栏会解除确认态');
+
+    // 单次替换不受确认流程影响
+    await setDoc2('cat cat cat');
+    await p.evaluate(() => LuoguEditor.openFind(true));
+    await find2('cat', 'fox');
+    await p.evaluate(() => LuoguEditor.replaceOne());
+    await p.waitForTimeout(350);
+    ck((await src()) === 'fox cat cat', '「替换」仍是一次一处、无需确认',
+      JSON.stringify(await src()));
+    await p.evaluate(() => LuoguEditor.closeFind());
+    await p.waitForTimeout(200);
+  }
+
 
 
   ck(errs.length === 0, '无 JS 报错', errs.join(' | '));

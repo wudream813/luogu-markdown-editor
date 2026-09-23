@@ -181,6 +181,13 @@ const safeStorage = {
       this.textarea.addEventListener('scroll', () => {
         // The gutter must follow even our own writes, so update it before bailing out.
         this.updateGutterScroll();
+        // The highlight layer is a separate element, so it has to be scrolled in
+        // lockstep or the boxes slide away from their glyphs.
+        const hl = document.getElementById('findHighlights');
+        if (hl) {
+          hl.scrollTop = this.textarea.scrollTop;
+          hl.scrollLeft = this.textarea.scrollLeft;
+        }
         if (this.isEchoScroll(this.textarea)) return;
         this.syncScroll('editor');
       });
@@ -1234,6 +1241,10 @@ const safeStorage = {
       if (this._tailPad !== wantTa) {
         this._tailPad = wantTa;
         ta.style.paddingBottom = `${wantTa}px`;
+        // The find highlight layer mirrors the textarea's box; if its padding does
+        // not follow, every painted box drifts from the glyph it belongs to.
+        const hl = document.getElementById('findHighlights');
+        if (hl) hl.style.paddingBottom = `${wantTa}px`;
       }
       if (this._previewTailPad !== wantPv) {
         this._previewTailPad = wantPv;
@@ -1444,9 +1455,12 @@ const safeStorage = {
     }
 
     closeFind() {
+      this._disarmReplaceAll();
       const bar = document.getElementById('findBar');
       if (bar) bar.hidden = true;
       this._findMatches = null;
+      const layer = document.getElementById('findHighlights');
+      if (layer) layer.textContent = '';
       if (this.textarea) this.textarea.focus();
     }
 
@@ -1484,6 +1498,9 @@ const safeStorage = {
     /** Recompute all matches and reveal the current one. */
     runFind(keepIndex) {
       if (!this.isFindOpen() || !this.textarea) return;
+      // The pending confirmation belongs to the previous query; a new search must
+      // not be able to inherit someone else's "yes".
+      if (this._replaceAllArmed) this._disarmReplaceAll();
       const re = this._findRegex();
       const countEl = document.getElementById('findCount');
       const text = this.textarea.value;
@@ -1516,7 +1533,47 @@ const safeStorage = {
         countEl.textContent = matches.length
           ? (this._findIndex + 1) + '/' + matches.length : '0/0';
       }
+      this._paintHighlights();
       if (matches.length) this._revealMatch();
+    }
+
+    /**
+     * Paint every match behind the textarea, marking the current one.
+     *
+     * A <textarea> cannot hold markup, so the matches are drawn on a mirror layer
+     * with identical metrics sitting underneath. Only the boxes are visible: the
+     * mirror's own text is transparent, and the real glyphs come from the textarea
+     * on top.
+     */
+    _paintHighlights() {
+      const layer = document.getElementById('findHighlights');
+      if (!layer || !this.textarea) return;
+      const matches = (this.isFindOpen() && this._findMatches) || [];
+      if (!matches.length) {
+        if (layer.firstChild) layer.textContent = '';
+        layer.scrollTop = this.textarea.scrollTop;
+        return;
+      }
+
+      const text = this.textarea.value;
+      const frag = document.createDocumentFragment();
+      let at = 0;
+      for (let i = 0; i < matches.length; i++) {
+        const m = matches[i];
+        if (m.start > at) frag.appendChild(document.createTextNode(text.slice(at, m.start)));
+        const mark = document.createElement('mark');
+        if (i === this._findIndex) mark.className = 'is-current';
+        // A zero-width match would paint nothing; give it something to show.
+        mark.textContent = m.end > m.start ? text.slice(m.start, m.end) : '\u200b';
+        frag.appendChild(mark);
+        at = m.end;
+      }
+      // Trailing newline keeps the last line's height so the layer scrolls in step.
+      frag.appendChild(document.createTextNode(text.slice(at) + '\n'));
+      layer.textContent = '';
+      layer.appendChild(frag);
+      layer.scrollTop = this.textarea.scrollTop;
+      layer.scrollLeft = this.textarea.scrollLeft;
     }
 
     _revealMatch() {
@@ -1543,11 +1600,23 @@ const safeStorage = {
       this._findIndex = ((this._findIndex + delta) % n + n) % n;   // wraps both ways
       const countEl = document.getElementById('findCount');
       if (countEl) countEl.textContent = (this._findIndex + 1) + '/' + n;
+      this._paintHighlights();
       this._revealMatch();
     }
 
     findNext() { this._stepFind(1); }
     findPrev() { this._stepFind(-1); }
+
+    /** Put the "replace all" button back to its resting state. */
+    _disarmReplaceAll() {
+      clearTimeout(this._replaceAllTimer);
+      this._replaceAllArmed = false;
+      const btn = document.getElementById('replaceAllBtn');
+      if (btn) {
+        btn.classList.remove('is-armed');
+        btn.textContent = '全部';
+      }
+    }
 
     /** Replacement text, honouring $1..$9 group references in regex mode. */
     _expandReplacement(matchText) {
@@ -1577,10 +1646,35 @@ const safeStorage = {
       this.runFind();
     }
 
-    replaceAll() {
+    /**
+     * Replace every match — but never on a single click.
+     *
+     * "Replace all" rewrites the whole document in one irreversible-looking step, so
+     * it asks first and names the count. The confirmation is a second click on the
+     * button itself (armed for a few seconds) rather than a modal, so the matches
+     * stay visible while deciding; `force` skips it for programmatic callers.
+     */
+    replaceAll(force) {
       if (!this.isFindOpen() || !this.textarea) return;
       const matches = this._findMatches || [];
       if (!matches.length) return;
+
+      const btn = document.getElementById('replaceAllBtn');
+      if (!force && !this._replaceAllArmed) {
+        this._replaceAllArmed = true;
+        if (btn) {
+          btn.classList.add('is-armed');
+          btn.textContent = `确认替换 ${matches.length} 处？`;
+        }
+        if (this.showToast) {
+          this.showToast(`将替换 ${matches.length} 处，请再点一次确认`, 'info');
+        }
+        clearTimeout(this._replaceAllTimer);
+        this._replaceAllTimer = setTimeout(() => this._disarmReplaceAll(), 4000);
+        return;
+      }
+      this._disarmReplaceAll();
+
       const text = this.textarea.value;
       // Walk backwards so each splice leaves the earlier offsets valid.
       let out = text;

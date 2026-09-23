@@ -300,7 +300,7 @@
         <div class="find-row">
           <input type="text" id="replaceInput" class="find-input" placeholder="替换为" aria-label="替换内容" spellcheck="false" />
           <button class="find-btn find-btn-wide" onclick="LuoguEditor.replaceOne()" title="替换当前匹配">替换</button>
-          <button class="find-btn find-btn-wide" onclick="LuoguEditor.replaceAll()" title="替换全部匹配">全部</button>
+          <button class="find-btn find-btn-wide" id="replaceAllBtn" onclick="LuoguEditor.replaceAll()" title="替换全部匹配（需二次确认）">全部</button>
         </div>
         <div class="find-row find-opts">
           <label class="find-opt"><input type="checkbox" id="findCase" onchange="LuoguEditor.runFind()" /> 区分大小写</label>
@@ -313,7 +313,14 @@
         <div class="gutter-stack">
           <div id="lineNumbersGutter" class="line-numbers-gutter"></div>
         </div>
-        <textarea id="editorTextarea" class="editor-textarea" placeholder="在此输入 Markdown 内容，右侧将实时渲染……" spellcheck="false"></textarea>
+        <div class="editor-stack">
+          <!-- Mirrors the textarea's text so matches can be painted behind it: a
+               <textarea> cannot contain markup, so highlighting has to live on an
+               identically-styled layer underneath. aria-hidden because it is a
+               visual duplicate of content the textarea already exposes. -->
+          <div id="findHighlights" class="find-highlights" aria-hidden="true"></div>
+          <textarea id="editorTextarea" class="editor-textarea" placeholder="在此输入 Markdown 内容，右侧将实时渲染……" spellcheck="false"></textarea>
+        </div>
       </div>
     </div>
 
@@ -735,7 +742,7 @@
         <li><code>Ctrl + Shift + 9</code>：插入任务列表　<b>洛谷</b></li>
         <li><code>Ctrl + Shift + ↑</code> / <code>Ctrl + Shift + ↓</code>：提升 / 降低标题等级（H1～H6，段落⇄标题）　<b>洛谷</b></li>
         <li><code>Ctrl + F</code>：查找　<b>洛谷</b>；<code>Ctrl + H</code>：查找并替换　<span style="opacity:.7">（本编辑器特有）</span>
-          <br /><span style="opacity:.7">查找框内 <code>Enter</code> / <code>Shift+Enter</code> 跳下一个 / 上一个，替换框内 <code>Enter</code> 替换当前、<code>Ctrl+Enter</code> 全部替换，<code>Esc</code> 关闭；支持区分大小写、全词匹配、正则（<code>$1</code>～<code>$9</code> 引用分组）。替换可用 <code>Ctrl+Z</code> 撤销。</span></li>
+          <br /><span style="opacity:.7">全部匹配会在编辑区<b>高亮</b>，当前匹配用深色标出。查找框内 <code>Enter</code> / <code>Shift+Enter</code> 跳下一个 / 上一个，替换框内 <code>Enter</code> 替换当前、<code>Ctrl+Enter</code> 全部替换，<code>Esc</code> 关闭；支持区分大小写、全词匹配、正则（<code>$1</code>～<code>$9</code> 引用分组）。<b>「全部」需点两次确认</b>（按钮会变红并显示处数，4 秒未确认自动取消）。替换可用 <code>Ctrl+Z</code> 撤销。</span></li>
         <li><code>Ctrl + S</code>：保存 Markdown 到本地　<span style="opacity:.7">（本编辑器特有）</span></li>
         <li><code>Ctrl + K</code> / <code>Ctrl + Shift + K</code>：插入超链接 / 行内公式　<span style="opacity:.7">（本编辑器旧键，仍可用）</span></li>
         <li><code>Ctrl + Shift + M</code>：插入行间数学公式 <code>$$</code>　<span style="opacity:.7">（本编辑器特有）</span></li>
