@@ -84,6 +84,18 @@
         </div>
       </div>
 
+      <!-- Settings -->
+      <div class="tool-dropdown">
+        <button class="btn btn-icon-only" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.35.4.64.73.83H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <div class="dropdown-menu dropdown-menu-right">
+          <button class="dropdown-item" id="lintToggleItem" onclick="LuoguEditor.toggleLintDisplay()">
+            <span id="lintToggleMark">✅</span> 显示排版问题
+          </button>
+        </div>
+      </div>
+
       <!-- Theme Switcher -->
       <div class="tool-dropdown">
         <button class="btn btn-icon-only"  title="切换主题" aria-label="切换主题">
@@ -748,6 +760,13 @@
         <li><code>Ctrl + Shift + M</code>：插入行间数学公式 <code>$$</code>　<span style="opacity:.7">（本编辑器特有）</span></li>
         <li><code>Ctrl + Z</code> / <code>Ctrl + Y</code>：撤销 / 重做</li>
         <li><code>Tab</code> / <code>Shift + Tab</code>：增加 / 减少 4 空格缩进</li>
+      </ul>
+
+      <h4 style="color:var(--luogu-blue); margin-top: 16px;">⚙️ 设置：</h4>
+      <ul style="padding-left: 20px; margin-top: 6px;">
+        <li><b>显示排版问题</b>：顶栏齿轮图标 → 勾选/取消。关闭后状态栏右下角的「排版评分」徽标会隐藏，
+          编辑时也不再运行排版检查（长文档可省下每次输入的检查开销）；设置会被记住。</li>
+        <li>关闭后，工具栏的「洛谷排版修复」按钮仍可随时手动使用。</li>
       </ul>
 
       <h4 style="color:var(--luogu-blue); margin-top: 16px;">🔣 KaTeX 全局宏（<code>\gdef</code>）：</h4>

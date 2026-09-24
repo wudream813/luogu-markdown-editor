@@ -462,6 +462,81 @@ const { chromium } = require('playwright');
     await p.waitForTimeout(200);
   }
 
+  // ---- 要求 46: 可关闭排版问题显示 -------------------------------------------------
+  {
+    const BAD = '这是中文and英文混排没有空格，还有数字123贴着字。';
+    const setBad = async (extra) => {
+      await p.evaluate((v) => {
+        const ta = document.getElementById('editorTextarea');
+        ta.value = v; ta.dispatchEvent(new Event('input', { bubbles: true }));
+        LuoguEditor.render(); LuoguEditor.updateStats(v);
+      }, BAD + (extra || ''));
+      await p.waitForTimeout(350);
+    };
+    const badge = () => p.evaluate(() => {
+      const el = document.getElementById('linterScoreBadge');
+      return { hidden: el.hidden, shown: el.offsetParent !== null, text: el.innerText };
+    });
+
+    await p.evaluate(() => LuoguEditor.toggleLintDisplay(true));
+    await setBad();
+    let bg = await badge();
+    ck(!bg.hidden && bg.shown && /排版评分/.test(bg.text), '默认显示排版评分', JSON.stringify(bg));
+
+    await p.evaluate(() => LuoguEditor.toggleLintDisplay(false));
+    await p.waitForTimeout(300);
+    bg = await badge();
+    ck(bg.hidden && !bg.shown, '关闭后徽标隐藏', JSON.stringify(bg));
+    ck(await p.evaluate(() => document.getElementById('lintToggleMark').textContent === '⬜'),
+      '菜单勾选标记同步');
+    ck(await p.evaluate(() => localStorage.getItem('luogu_editor_lint_display') === '0'),
+      '偏好写入 localStorage');
+
+    await setBad('再加一句。');
+    ck((await badge()).hidden, '继续编辑不会让徽标复现');
+    ck(/字符/.test(await p.evaluate(() => document.getElementById('docStatsText').innerText)),
+      '字数统计不受影响');
+
+    // 关闭后不应再为看不见的结果付出 lint 开销
+    const calls = await p.evaluate(() => {
+      let n = 0;
+      const orig = LuoguEditor.linter.lint.bind(LuoguEditor.linter);
+      LuoguEditor.linter.lint = (t) => { n++; return orig(t); };
+      LuoguEditor.updateStats('随便一些文字and字母。');
+      LuoguEditor.linter.lint = orig;
+      return n;
+    });
+    ck(calls === 0, '关闭后不再运行 linter', `调用 ${calls} 次`);
+
+    // 排版修复按钮与 linter 本身仍可用
+    await p.evaluate(() => {
+      const ta = document.getElementById('editorTextarea');
+      ta.value = '中文and英文'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await p.waitForTimeout(250);
+    await p.evaluate(() => LuoguEditor.autoFixSpacing());
+    await p.waitForTimeout(350);
+    ck((await src()) !== '中文and英文', '「洛谷排版修复」仍可用', JSON.stringify(await src()));
+
+    await p.evaluate(() => LuoguEditor.toggleLintDisplay(true));
+    await p.waitForTimeout(350);
+    bg = await badge();
+    ck(!bg.hidden && /排版评分:\s*\d+/.test(bg.text), '重新开启后评分为最新值', JSON.stringify(bg));
+
+    // 关闭显示时不该留下报告弹窗
+    await p.evaluate(() => LuoguEditor.openModal('linterModal'));
+    await p.waitForTimeout(300);
+    await p.evaluate(() => LuoguEditor.toggleLintDisplay(false));
+    await p.waitForTimeout(350);
+    ck(await p.evaluate(() => {
+      const m = document.getElementById('linterModal');
+      return !m.classList.contains('show') || getComputedStyle(m).display === 'none';
+    }), '关闭显示会收起报告弹窗');
+    await p.evaluate(() => LuoguEditor.toggleLintDisplay(true));
+    await p.waitForTimeout(300);
+  }
+
+
 
 
 

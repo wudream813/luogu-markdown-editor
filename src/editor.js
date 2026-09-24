@@ -46,6 +46,8 @@ const safeStorage = {
       this.docName = '洛谷题解_未命名.md';
       // Scroll sync defaults to on; a stored '0' turns it off.
       this.scrollSyncEnabled = safeStorage.getItem('luogu_editor_scroll_sync') !== '0';
+      // Typography lint display defaults to on; a stored '0' hides it.
+      this.lintDisplayEnabled = safeStorage.getItem('luogu_editor_lint_display') !== '0';
       this.currentMode = 'split'; // 'split' | 'editor-only' | 'preview-only' | 'typora'
       this.typora = null;         // lazily constructed once the DOM is bound
       this.currentTheme = 'luogu';
@@ -103,6 +105,7 @@ const safeStorage = {
       this.setTheme(savedTheme);
       // Reflect the stored scroll-sync preference on the toolbar button.
       this.toggleScrollSync(this.scrollSyncEnabled);
+      this.applyLintDisplay();
 
       if (savedContent && savedContent.trim().length > 0) {
         this.resetCalloutToggles();
@@ -1415,10 +1418,20 @@ const safeStorage = {
         statsEl.innerText = `${lines} 行 | ${words} 字 | ${chars} 字符 | ${formulas} 公式 | 预估阅读 ${readTime} 分钟`;
       }
 
-      // Check with linter
-      const lintResult = this.linter.lint(text);
+      // Check with linter.
+      //
+      // Skipped entirely when the display is off, not merely hidden: lint() runs on
+      // every (debounced) render and costs ~50ms on a 400KB document, so paying for
+      // a result nobody will see would tax exactly the long solutions where typing
+      // latency already hurts most.
       const scoreBadge = document.getElementById('linterScoreBadge');
+      if (!this.lintDisplayEnabled) {
+        if (scoreBadge) scoreBadge.hidden = true;
+        return;
+      }
+      const lintResult = this.linter.lint(text);
       if (scoreBadge) {
+        scoreBadge.hidden = false;
         scoreBadge.innerText = `排版评分: ${lintResult.score}分`;
         scoreBadge.className = `status-score-badge ${lintResult.score >= 90 ? 'status-score-good' : 'status-score-warn'}`;
       }
@@ -1729,6 +1742,45 @@ const safeStorage = {
      */
     resetCalloutToggles() {
       if (this._calloutToggles) this._calloutToggles.clear();
+    }
+
+    /** Sync the lint UI to the stored preference without announcing it. */
+    applyLintDisplay() {
+      const mark = document.getElementById('lintToggleMark');
+      if (mark) mark.textContent = this.lintDisplayEnabled ? '✅' : '⬜';
+      const badge = document.getElementById('linterScoreBadge');
+      if (badge) badge.hidden = !this.lintDisplayEnabled;
+    }
+
+    /**
+     * Show or hide the typography lint readout.
+     *
+     * The switch lives in the settings menu rather than on the badge itself: hiding
+     * a control from the control you just hid would leave no way back.
+     */
+    toggleLintDisplay(force) {
+      this.lintDisplayEnabled = (force === undefined) ? !this.lintDisplayEnabled : !!force;
+      safeStorage.setItem('luogu_editor_lint_display', this.lintDisplayEnabled ? '1' : '0');
+
+      const mark = document.getElementById('lintToggleMark');
+      if (mark) mark.textContent = this.lintDisplayEnabled ? '✅' : '⬜';
+      const item = document.getElementById('lintToggleItem');
+      if (item) item.setAttribute('aria-pressed', this.lintDisplayEnabled ? 'true' : 'false');
+
+      const badge = document.getElementById('linterScoreBadge');
+      if (badge) badge.hidden = !this.lintDisplayEnabled;
+
+      // Turning it off while the report is open would leave a panel on screen that
+      // the setting says should not exist.
+      if (!this.lintDisplayEnabled) this.closeModal('linterModal');
+      // Turning it back on needs a fresh score: the document moved on while the
+      // linter was not running.
+      if (this.lintDisplayEnabled) this.updateStats(this.getContent());
+
+      if (this.showToast) {
+        this.showToast(`排版问题显示已${this.lintDisplayEnabled ? '开启' : '关闭'}`, 'info');
+      }
+      return this.lintDisplayEnabled;
     }
 
     // Theme switcher
