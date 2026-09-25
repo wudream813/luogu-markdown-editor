@@ -68,7 +68,9 @@
 
 Github 访问慢的，可以使用镜像站：<https://mark.cheese-zzz.cloud/>。
 
-镜像站由 @Transparent-fish 提供，内容同步自本站。
+若镜像站不可用，请使用镜像站2：<https://mark.cheese-zzz.top/>，详见 [issues](https://github.com/wudream813/luogu-markdown-editor/issues/2)。
+
+镜像站由 @Transparent-fish 提供，内容同步自本站。镜像站仓库 Fork 链接：[Link](https://github.com/Transparent-fish/luogu-markdown-editor)。
 
 这是同一份代码的在线部署，功能与离线版完全一致。文档保存在浏览器
 localStorage 里，**不会上传到任何服务器**；换设备或清理浏览器数据前，
