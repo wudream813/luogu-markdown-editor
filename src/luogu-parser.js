@@ -71,6 +71,12 @@
     return h.toString(36);
   }
 
+  // A line that opens a new block, so it cannot lazily continue a list item.
+  const BLOCK_START_RE =
+    /^\s*(?:#{1,6}\s|>|[`~]{3,}|\||:{2,}|(?:[*+-]|\d+[.)])\s|(?:\*\s*){3,}$|(?:-\s*){3,}$|(?:_\s*){3,}$)/;
+  // A line inside a list item that needs the block parser rather than inline rendering.
+  const BLOCK_IN_ITEM_RE = /^\s*(?:\||[`~]{3,}|>|#{1,6}\s|:{2,})/;
+
   const _katexRenderCache = new Map();
   const _katexRenderCacheMax = 4000;
   /**
@@ -1433,13 +1439,24 @@
           break;
         }
 
-        const match = line.match(/^(\s*)([*+-]|\d+[.)])\s+(.*)$/);
+        const match = line.match(/^(\s*)([*+-]|\d+[.)])(\s+)(.*)$/);
         if (!match || this.indentOf(line) !== baseIndent) break;
 
-        let rawText = match[3];
+        // Column where this item's CONTENT starts, i.e. past the marker and the
+        // spaces after it. CommonMark measures nesting and continuation against this
+        // column, not against the marker's own indent: under "1. " (3 columns wide)
+        // a line indented by only 2 spaces is NOT inside the item, it starts a new
+        // top-level list. Using baseIndent instead made "1. x" swallow a 2-space
+        // "- y" as a child list.
+        const contentCol = match[1].length + match[2].length + match[3].length;
+
+        let rawText = match[4];
         const itemStart = i;
         i++;
         let nestedHtml = '';
+        // Continuation lines kept with their indentation relative to contentCol, so
+        // block structures inside the item (tables, fences, quotes) still parse.
+        const contLines = [];
 
         // Detect a task marker now and assign its sequential index in source order.
         // (editor.js's toggleTask maps data-task-index back to the Nth task line in the
@@ -1468,20 +1485,41 @@
           }
           const nind = this.indentOf(nl);
           const isItem = this.isListItem(nl);
-          if (isItem && nind === baseIndent) break;              // sibling at same level
-          if (isItem && nind > baseIndent) {                     // nested list
+          if (isItem && nind < contentCol) break;   // sibling, or a shallower new list
+          if (isItem && nind >= contentCol) {                    // nested list
             const sub = this.parseListAt(lines, i, nind, srcLineOf);
             nestedHtml += sub.html;
             i = sub.nextIndex;
             continue;
           }
-          if (nind > baseIndent) {                               // continuation text line
-            rawText += '\n' + nl.replace(/^[ \t]+/, '');
+          if (nind >= contentCol) {                              // content of this item
+            contLines.push(nl.slice(contentCol));
             i++;
             continue;
           }
-          break;                                                 // non-indented non-item ends item
+          if (nind > baseIndent) {                               // indented, but shallow
+            contLines.push(nl.replace(/^[ \t]+/, ''));
+            i++;
+            continue;
+          }
+          // Lazy continuation: an unindented line straight after the item's text is
+          // still part of its paragraph (CommonMark), as long as it does not itself
+          // open a block.
+          if (!BLOCK_START_RE.test(nl)) {
+            contLines.push(nl.trim());
+            i++;
+            continue;
+          }
+          break;                                                 // a new block ends the item
         }
+
+        // Does the item hold block-level content? Continuation lines were previously
+        // only run through renderInline(), so an indented table inside a bullet came
+        // out as literal pipes.
+        const blockish = contLines.some((l) => BLOCK_IN_ITEM_RE.test(l))
+          || (contLines.length > 0 && contLines.some((l) => /^\s*$/.test(l)));
+        if (blockish) rawText = { block: [rawText].concat(contLines) };
+        else if (contLines.length) rawText += '\n' + contLines.join('\n');
 
         items.push({
           rawText, nestedHtml, taskIdx,
@@ -1499,8 +1537,10 @@
         if (it.taskIdx !== null) {
           liClass = 'luogu-task-item';
           // Re-match on the final rawText (which may include continuation lines)
-          const finalMatch = it.rawText.match(/^\[([ xX])\]\s*(.*)$/);
-          const content = finalMatch ? finalMatch[2] : it.rawText;
+          const body = (it.rawText && it.rawText.block)
+            ? it.rawText.block.join('\n') : it.rawText;
+          const finalMatch = body.match(/^\[([ xX])\]\s*(.*)$/);
+          const content = finalMatch ? finalMatch[2] : body;
           inner = `
             <label class="luogu-checkbox-label">
               <input type="checkbox" class="luogu-task-checkbox" data-task-index="${it.taskIdx}" ${it.taskChecked ? 'checked' : ''} onchange="toggleTaskCheckbox(this)" />
@@ -1508,6 +1548,10 @@
               <span class="luogu-task-text">${this.renderInline(content)}</span>
             </label>
           `;
+        } else if (it.rawText && it.rawText.block) {
+          // Re-parse the item's body as blocks so tables / fences / quotes inside a
+          // list render as real structures rather than escaped text.
+          inner = this.parseBlocks(it.rawText.block);
         } else {
           inner = this.renderInline(it.rawText);
         }

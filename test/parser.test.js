@@ -638,6 +638,79 @@ test('GFM footnotes', () => {
   assert.doesNotMatch(render('文字\n\n[^1]: 未被引用'), /luogu-footnotes/);
 });
 
+// ------------------------------- List items hold real blocks
+//
+// Two bugs reported against the VSCode sibling project reproduced here as well.
+// Both come from the same root cause: continuation lines were measured against the
+// marker's indent instead of the item's CONTENT column, and were only ever run
+// through renderInline(), so no block structure inside an item could survive.
+
+test('an indented table inside a list item renders as a table', () => {
+  for (const src of [
+    '- 1\n\n  | 2 | 3 |\n  |:-:|:-:|\n  | 4 | 5 |',   // blank line before
+    '- 1\n  | 2 | 3 |\n  |:-:|:-:|\n  | 4 | 5 |',       // no blank line
+    '1. 甲\n\n   | a | b |\n   |---|---|\n   | 1 | 2 |', // ordered, 3-space column
+  ]) {
+    const h = render(src);
+    assert.match(h, /<li[^>]*>[\s\S]*<table[\s\S]*<\/table>[\s\S]*<\/li>/,
+      `表格未渲染在列表项内: ${JSON.stringify(src)}`);
+    assert.doesNotMatch(h, /\|:-:\|/, '仍有未解析的表格分隔行');
+  }
+});
+
+test('other block constructs also work inside a list item', () => {
+  assert.match(render('- a\n\n  ```\n  x\n  ```'), /<li[^>]*>[\s\S]*<pre/);
+  assert.match(render('- a\n\n  > q'), /<li[^>]*>[\s\S]*<blockquote/);
+  assert.match(render('- a\n\n  # h'), /<li[^>]*>[\s\S]*<h1/);
+});
+
+test('nesting is measured against the content column, not the marker indent', () => {
+  // "1. " is 3 columns wide, so 2 spaces is NOT inside the item: per CommonMark the
+  // bullet starts a new top-level list instead of becoming a child of "1.".
+  const shallow = render('1. 1\n  - test');
+  assert.doesNotMatch(shallow, /<ol[\s\S]*<ul[\s\S]*<\/ul>[\s\S]*<\/ol>/,
+    '2 空格不应嵌套进有序列表项');
+  // Three spaces reaches the content column and does nest.
+  assert.match(render('1. 1\n   - test'), /<ol[\s\S]*<ul[\s\S]*<\/ul>[\s\S]*<\/ol>/);
+  // An unordered "- " is only 2 columns wide, so 2 spaces is enough there.
+  assert.match(render('- 1\n  - test'), /<ul[\s\S]*<ul[\s\S]*<\/ul>[\s\S]*<\/ul>/);
+});
+
+test('a plain line right after an item lazily continues it', () => {
+  // CommonMark lazy continuation: no indent needed to stay in the paragraph.
+  const h = render('- a\nb');
+  assert.match(h, /<li[^>]*>a\s*b<\/li>/);
+  // A blank line ends the item, so the text becomes its own paragraph.
+  assert.match(render('- a\n\nb'), /<\/ul>\s*<p[^>]*>b<\/p>/);
+  // A line that opens a block is not swallowed.
+  for (const [src, re] of [
+    ['- a\n# h', /<h1/], ['- a\n> q', /<blockquote/],
+    ['- a\n```\nx\n```', /<pre/], ['- a\n---', /<hr/],
+  ]) {
+    const out = render(src);
+    assert.match(out, re, `块级行未被解析为块: ${JSON.stringify(src)}`);
+    // The block must sit AFTER the list, not inside the item. Compare positions
+    // rather than using a greedy regex, which would happily span across </li>.
+    const liEnd = out.indexOf('</ul>');
+    const blockAt = out.search(re);
+    assert.ok(blockAt > liEnd,
+      `块级行被吞进了列表项: ${JSON.stringify(src)} -> ${out}`);
+  }
+});
+
+test('list item content is never dropped', () => {
+  // Even where we do not yet emit CommonMark's <p> wrappers for loose lists, the
+  // text itself must survive.
+  for (const [src, want] of [
+    ['- a\n\n  b', ['a', 'b']],
+    ['- a\n\n  b\n\n  c', ['a', 'b', 'c']],
+    ['- a\n\n- b', ['a', 'b']],
+  ]) {
+    const text = render(src).replace(/<[^>]*>/g, ' ');
+    for (const w of want) assert.ok(text.includes(w), `内容丢失 ${w}: ${JSON.stringify(src)}`);
+  }
+});
+
 // ------------------------------- Link reference definitions may wrap
 //
 // CommonMark allows one line ending between the label's colon and the destination,
