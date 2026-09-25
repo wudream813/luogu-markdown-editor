@@ -265,6 +265,56 @@
       return html;
     }
 
+    /**
+     * Resolve the destination (and optional title) of a link reference definition
+     * whose label line has already been matched.
+     *
+     * `sameLine` is whatever followed the colon on the label's own line. When that is
+     * empty the destination is taken from the next line; the title may then sit on the
+     * line after it. Returns null when this is not a definition at all, in which case
+     * the caller must keep the line as ordinary text.
+     */
+    parseLinkRefTail(lines, labelIndex, sameLine) {
+      let rest = (sameLine || '').trim();
+      let last = labelIndex;
+
+      if (rest === '') {
+        const next = lines[labelIndex + 1];
+        // A blank line (or end of input) after the colon means there is no
+        // destination, so the label line is just text.
+        if (next === undefined || /^\s*$/.test(next)) return null;
+        // An indented code block or a fence is never a continuation.
+        if (/^(?: {4}|\t)/.test(next) || /^\s*([`~]{3,})/.test(next)) return null;
+        rest = next.trim();
+        last = labelIndex + 1;
+      }
+
+      // Destination is a single bare token; anything after it on the same line has to
+      // be the title, otherwise the whole construct is not a definition.
+      const m = rest.match(/^(\S+)(?:[ \t]+(.*))?$/);
+      if (!m) return null;
+      const url = m[1];
+      let title = '';
+
+      if (m[2] !== undefined && m[2] !== '') {
+        const t = m[2].trim().match(/^"(.*)"$|^'(.*)'$|^\((.*)\)$/);
+        if (!t) return null;                    // trailing junk -> not a definition
+        title = (t[1] ?? t[2] ?? t[3] ?? '').trim();
+      } else {
+        // No title yet: it may occupy the whole of the following line.
+        const after = lines[last + 1];
+        if (after !== undefined && !/^(?: {4}|\t)/.test(after)) {
+          const t = after.trim().match(/^"(.*)"$|^'(.*)'$|^\((.*)\)$/);
+          if (t) {
+            title = (t[1] ?? t[2] ?? t[3] ?? '').trim();
+            last += 1;
+          }
+        }
+      }
+
+      return { url, title, lastLine: last };
+    }
+
     // Harvest GFM link reference definitions (`[label]: url "title"`) and footnote
     // definitions (`[^label]: text`) from the source, removing their lines from the
     // text so they are never rendered as literal paragraphs.
@@ -319,16 +369,31 @@
         }
 
         // Link reference definition: [label]: url "optional title"
-        // The label must not start with `^` (that is a footnote) and the destination
-        // must look like a bare URL token (no spaces) to avoid swallowing ordinary
-        // prose that happens to contain a colon.
-        const refMatch = line.match(/^ {0,3}\[([^\^\]][^\]]*|[^\^\]])\]:\s*(\S+)(?:\s+["'(](.*)["')])?\s*$/);
-        if (refMatch) {
-          const label = refMatch[1].trim().toLowerCase();
-          if (!this.linkRefs.has(label)) {
-            this.linkRefs.set(label, { url: refMatch[2].trim(), title: (refMatch[3] || '').trim() });
+        //
+        // The label must not start with `^` (that is a footnote). CommonMark allows
+        // ONE line ending between the colon and the destination, and another between
+        // the destination and the title, so a single definition may be spread over up
+        // to three lines:
+        //
+        //     [洛谷]:
+        //     https://www.luogu.com.cn/
+        //     "首页"
+        //
+        // Only a *blank* line breaks it. The destination must still be a bare token
+        // with no spaces, which is what keeps ordinary prose containing a colon from
+        // being swallowed ("时间复杂度:" followed by a sentence stays prose).
+        const refHead = line.match(/^ {0,3}\[([^\^\]][^\]]*|[^\^\]])\]:[ \t]*(.*)$/);
+        if (refHead) {
+          const parsed = this.parseLinkRefTail(lines, i, refHead[2]);
+          if (parsed) {
+            const label = refHead[1].trim().toLowerCase();
+            if (!this.linkRefs.has(label)) {
+              this.linkRefs.set(label, { url: parsed.url, title: parsed.title });
+            }
+            i = parsed.lastLine;   // drop every line the definition occupied
+            continue;
           }
-          continue; // drop this line from output
+          // Not a definition after all: fall through and keep the line as prose.
         }
 
         kept.push(line);

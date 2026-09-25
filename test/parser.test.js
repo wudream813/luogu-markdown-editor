@@ -638,6 +638,69 @@ test('GFM footnotes', () => {
   assert.doesNotMatch(render('文字\n\n[^1]: 未被引用'), /luogu-footnotes/);
 });
 
+// ------------------------------- Link reference definitions may wrap
+//
+// CommonMark allows one line ending between the label's colon and the destination,
+// and another between the destination and the title. Our definition harvester used
+// to require everything on a single line, so this very common Luogu form left the
+// definition sitting in the output as literal text:
+//
+//     [洛谷]。
+//
+//     [洛谷]:
+//     https://www.luogu.com.cn/
+//
+// Behaviour below was pinned against the CommonMark reference implementation.
+
+test('link reference definition may put the destination on the next line', () => {
+  const h = render('[洛谷]。\n\n[洛谷]:\nhttps://www.luogu.com.cn/');
+  assert.match(h, /<a href="https:\/\/www\.luogu\.com\.cn\/"[^>]*>洛谷<\/a>/);
+  // The definition itself must not survive as text.
+  assert.doesNotMatch(h, /\[洛谷\]:/);
+});
+
+test('wrapped definitions accept indentation and a title on either line', () => {
+  assert.match(render('[a]。\n\n[a]:\n   /url'), /href="\/url"/);
+  assert.match(render('[a]。\n\n[a]:\n/url\n"标题"'), /title="标题"/);
+  assert.match(render('[a]。\n\n[a]: /url\n"标题"'), /title="标题"/);
+  assert.match(render("[a]。\n\n[a]:\n/url\n'标题'"), /title="标题"/);
+  assert.match(render('[a]。\n\n[a]:\n/url\n(标题)'), /title="标题"/);
+});
+
+test('a wrapped definition stops at a blank line or trailing junk', () => {
+  // These are NOT definitions; the text must stay exactly as written.
+  for (const src of [
+    '[a]。\n\n[a]:\n\n/url',          // blank line before the destination
+    '[a]。\n\n[a]:',                   // nothing after the colon
+    '[a]。\n\n[a]:\n这是一句话 有空格',  // destination cannot contain spaces
+    '[a]。\n\n[a]:\n/url 后面还有字',    // junk after the destination
+  ]) {
+    assert.doesNotMatch(render(src), /<a href/, `不应产生链接: ${JSON.stringify(src)}`);
+  }
+  // Ordinary prose that merely contains a colon is untouched.
+  assert.doesNotMatch(render('时间复杂度:\nO(n)'), /<a href/);
+});
+
+test('wrapped definitions respect code blocks and indentation', () => {
+  assert.doesNotMatch(render('```\n[a]:\n/url\n```\n\n[a]。'), /<a href="\/url"/);
+  assert.doesNotMatch(render('    [a]:\n    /url\n\n[a]。'), /<a href="\/url"/);
+});
+
+test('wrapped definitions still sanitise the destination', () => {
+  for (const scheme of ['javascript:alert(1)', 'vbscript:msgbox(1)', 'JaVaScRiPt:alert(1)']) {
+    const h = render(`[x]。\n\n[x]:\n${scheme}`);
+    assert.doesNotMatch(h, /href="(?:javascript|vbscript|data):/i);
+  }
+});
+
+test('several wrapped definitions in a row all register', () => {
+  const h = render('[a]:\n/u1\n[b]:\n/u2\n\n[a] [b]');
+  assert.match(h, /href="\/u1"/);
+  assert.match(h, /href="\/u2"/);
+  // First definition of a duplicated label wins, as in CommonMark.
+  assert.match(render('[a]:\n/first\n\n[a]:\n/second\n\n[a]'), /href="\/first"/);
+});
+
 // ------------------------------- Inline math may wrap onto the next line
 //
 // remark-math (what Luogu renders with) allows inline `$...$` to span multiple
