@@ -531,14 +531,32 @@
         text = out.join('\n');
       }
 
-      // Inline display math: `$$x$$` closed on one line. remark-math treats this as
-      // inline math (rendered inline, not as a centred block), so it must be handled
-      // separately from the fence form above.
-      text = text.replace(/\$\$([^\n]+?)\$\$/g, (match, formula) => {
+      // `$$x$$` closed on one line.
+      //
+      // Luogu renders such a formula as DISPLAY math (centred and enlarged) when it
+      // stands alone on its line, which is what authors expect and what the editor
+      // must mirror. Note this is NOT what stock remark-math does — that library
+      // reports single-line `$$..$$` as inline — so Luogu evidently configures it
+      // differently. Verified against the live site rather than the library.
+      //
+      // A `$$..$$` sitting INSIDE a sentence stays inline: promoting it would emit a
+      // block-level <div> inside a <p>, which is invalid HTML and would also split
+      // the sentence in half.
+      text = text.replace(/\$\$([^\n]+?)\$\$/g, (match, formula, offset, whole) => {
         const f = formula.trim();
         if (!f) return match;
-        const id = `LUOGUMATHINLINE${mathIdx++}END`;
-        store.push({ id, type: 'inline', formula: f });
+        const lineStart = whole.lastIndexOf('\n', offset - 1) + 1;
+        const nl = whole.indexOf('\n', offset + match.length);
+        const before = whole.slice(lineStart, offset);
+        const after = whole.slice(offset + match.length, nl === -1 ? whole.length : nl);
+        const alone = /^\s*$/.test(before) && /^\s*$/.test(after);
+        const id = alone
+          ? `LUOGUMATHBLOCK${mathIdx++}END`
+          : `LUOGUMATHINLINE${mathIdx++}END`;
+        store.push({ id, type: alone ? 'display' : 'inline', formula: f });
+        // Only the matched `$$..$$` is replaced; `before` was read solely to decide
+        // whether the formula stands alone, and re-emitting it here duplicated the
+        // preceding text ("句中的 句中的 a+b").
         return id;
       });
 
