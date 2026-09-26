@@ -711,6 +711,29 @@ test('list item content is never dropped', () => {
   }
 });
 
+test('changing the list marker starts a new list', () => {
+  // A list runs only while the marker keeps its shape. Previously the items just
+  // piled into whichever list came first, so bullets after "1. 2. 3." were rendered
+  // as items 4 and 5 of the numbered list.
+  const onlyOl = render('1. a\n2. b\n\n- c\n- d');
+  assert.match(onlyOl, /<ol[\s\S]*<\/ol>\s*<ul[\s\S]*<\/ul>/, '有序后接无序应拆成两个列表');
+  assert.strictEqual((onlyOl.match(/<ol\b/g) || []).length, 1);
+  assert.strictEqual((onlyOl.match(/<ul\b/g) || []).length, 1);
+  // Two items each, not four in one list.
+  assert.strictEqual((onlyOl.match(/<li\b/g) || []).length, 4);
+
+  assert.match(render('- a\n- b\n\n1. c'), /<ul[\s\S]*<\/ul>\s*<ol[\s\S]*<\/ol>/);
+  assert.match(render('1. a\n2. b\n- c'), /<ol[\s\S]*<\/ol>\s*<ul[\s\S]*<\/ul>/);
+  // Bullet character and ordered delimiter also count as a change.
+  assert.strictEqual((render('- a\n* b').match(/<ul\b/g) || []).length, 2);
+  assert.strictEqual((render('1. a\n2) b').match(/<ol\b/g) || []).length, 2);
+  // ...but a consistent marker must NOT be split.
+  assert.strictEqual((render('- a\n- b\n- c').match(/<ul\b/g) || []).length, 1);
+  assert.strictEqual((render('1. a\n2. b\n3. c').match(/<ol\b/g) || []).length, 1);
+  // Nesting is unaffected.
+  assert.match(render('1. a\n   - x\n2. b'), /<ol[\s\S]*<ul[\s\S]*<\/ul>[\s\S]*<\/ol>/);
+});
+
 // ------------------------------- Link reference definitions may wrap
 //
 // CommonMark allows one line ending between the label's colon and the destination,

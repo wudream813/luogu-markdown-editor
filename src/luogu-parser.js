@@ -1433,6 +1433,16 @@
       let i = startIndex;
       const isOrdered = /^\s*\d+[.)]\s+/.test(lines[i]);
       const listTag = isOrdered ? 'ol' : 'ul';
+      // A list runs only as long as the marker keeps its shape. Switching between
+      // ordered and unordered — or changing the bullet / delimiter character —
+      // starts a NEW list in CommonMark. Without this the items simply piled into
+      // whichever list came first, so "1. 2. 3." followed by "- a - b" rendered the
+      // bullets as items 4 and 5 of the numbered list.
+      const kindOf = (ln) => {
+        const m = ln.match(/^\s*(?:([*+-])|\d+([.)]))\s+/);
+        return m ? (m[1] || m[2]) : null;
+      };
+      const listKind = kindOf(lines[i]);
       // A list starting at something other than 1 must carry it through as `start`,
       // otherwise "5. / 6." silently renumbers to 1. / 2. — the numbers are often
       // meaningful (continuing a list interrupted by a code block, citing step N).
@@ -1459,6 +1469,7 @@
 
         const match = line.match(/^(\s*)([*+-]|\d+[.)])(\s+)(.*)$/);
         if (!match || this.indentOf(line) !== baseIndent) break;
+        if (kindOf(line) !== listKind) break;          // marker changed -> new list
 
         // Column where this item's CONTENT starts, i.e. past the marker and the
         // spaces after it. CommonMark measures nesting and continuation against this
