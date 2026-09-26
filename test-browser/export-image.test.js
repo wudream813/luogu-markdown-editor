@@ -19,8 +19,19 @@ const fs = require('fs');
   const b = await chromium.launch();
   const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
   const errs = []; p.on('pageerror', (e) => errs.push(e.message));
+  // What must never happen is the document reaching a third party. Same-origin
+  // fetches are legitimate: in the hosted (multi-file) build SnapDOM reads the local
+  // KaTeX font files in order to inline them. The single-file build already carries
+  // them as data URIs, so it makes no requests at all.
+  const origin = (() => { try { return new URL(APP).origin; } catch (e) { return null; } })();
   const net = [];
-  p.on('request', (r) => { const u = r.url(); if (!/^(file|data|blob):/.test(u)) net.push(u); });
+  const foreign = [];
+  p.on('request', (r) => {
+    const u = r.url();
+    if (/^(file|data|blob):/.test(u)) return;
+    net.push(u);
+    if (!origin || !u.startsWith(origin)) foreign.push(u);
+  });
 
   // 拦截下载，拿到 PNG 字节
   await p.goto(APP, { waitUntil: 'networkidle' });
@@ -57,6 +68,7 @@ const fs = require('fs');
                overflowComputed: cs.overflowY };
     });
     const t0 = Date.now();
+    net.length = 0; foreign.length = 0;   // 页面自身的加载不算"截图联网"
     await p.evaluate(() => LuoguEditor.exportImage());
     await p.waitForFunction(() => window.__caught !== null, { timeout: 120000 });
     const ms = Date.now() - t0;
@@ -87,7 +99,12 @@ const fs = require('fs');
   ck(r.after.h === r.before.h && r.after.ov === r.before.ov && r.after.pb === r.before.pb,
     '容器样式（含尾部留白）已还原', JSON.stringify(r.after));
   ck(!r.after.leftoverStyle, '临时隐藏滚动条的样式已移除');
-  ck(net.length === 0, '全程无外部网络请求（离线可用）', net.slice(0, 3).join(','));
+  ck(foreign.length === 0, '截图期间无任何第三方请求（内容不外泄）', foreign.slice(0, 3).join(','));
+  if (/^file:/.test(APP)) {
+    ck(net.length === 0, '单文件版截图期间零网络请求（完全离线）', net.slice(0, 3).join(','));
+  } else {
+    ck(true, `托管版仅同源取本地字体用于内嵌（${net.length} 个同源请求）`);
+  }
 
   console.log('\n=== 2) 长文档：是否完整、是否自动降 scale ===');
   for (const n of [60, 300, 700]) {
