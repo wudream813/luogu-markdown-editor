@@ -35,8 +35,14 @@ jobs:
             echo "::error::Artifact still references external files."
             exit 1
           fi
-          if grep -qn "cdn\.jsdelivr\|unpkg\.com\|cdnjs\.cloudflare" LuoguMarkdownEditor.html; then
-            echo "::error::Artifact contains an external CDN reference."
+          # Look for things the page would actually LOAD, not for hostnames appearing
+          # anywhere in the file. A bare hostname string is not a dependency: the
+          # vendored SnapDOM carries a list of known font/CDN hosts as data, which
+          # made the old substring check fail even though the artifact fetches
+          # nothing. Match real reference positions instead.
+          if grep -qnE '(src|href)="https?://|url\(\s*["'"'"']?https?://' LuoguMarkdownEditor.html; then
+            echo "::error::Artifact contains an external URL reference."
+            grep -onE '(src|href)="https?://[^"]*|url\(\s*["'"'"']?https?://[^)]*' LuoguMarkdownEditor.html | head -5
             exit 1
           fi
           echo "Artifact is fully self-contained ($(wc -c < LuoguMarkdownEditor.html) bytes)."
