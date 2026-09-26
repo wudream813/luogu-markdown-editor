@@ -30,6 +30,10 @@ const safeStorage = {
 (function (global) {
   'use strict';
 
+  // A browser canvas cannot exceed 32767px on a side; beyond that it silently
+  // returns a truncated image rather than throwing.
+  const MAX_CANVAS_PX = 32767;
+
   class LuoguEditorApp {
     constructor() {
       const ParserClass = typeof LuoguParser !== 'undefined' ? LuoguParser : (global.LuoguParser || (typeof window !== 'undefined' ? window.LuoguParser : null));
@@ -3335,6 +3339,136 @@ const safeStorage = {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       this.showToast('已导出高颜值独立 HTML 文档！', 'success');
+    }
+
+    // ---- Export as a single long PNG -----------------------------------------
+    //
+    // Uses SnapDOM (vendored, MIT, zero-dependency) rather than html2canvas: it
+    // reproduces KaTeX formulas and Prism colouring faithfully because it captures
+    // the real computed styles instead of re-implementing a renderer, and it inlines
+    // fonts itself so the capture works offline from a file:// page.
+    //
+    // A browser canvas cannot exceed 32767px on a side. Past that it does not throw
+    // — it silently returns a truncated image — so the scale is reduced to fit and
+    // the user is told when that happens.
+    async exportImage() {
+      const el = this.previewEl;
+      const snap = (typeof window !== 'undefined') && window.snapdom;
+      if (!el) return;
+      if (!snap) {
+        this.showToast('图片导出组件未加载，请刷新后重试', 'error');
+        return;
+      }
+      if (!this.getContent().trim()) {
+        this.showToast('文档为空，没有可导出的内容', 'info');
+        return;
+      }
+
+      this.showToast('正在生成长图，请稍候……', 'info');
+      // Yield once so the toast actually paints before the main thread is busy.
+      await new Promise((r) => setTimeout(r, 50));
+
+      const undo = this._prepareForCapture(el);
+      try {
+        // Measure AFTER the layout has been unlocked, or a scrollable preview would
+        // report only its visible height and the image would stop at the fold.
+        const w = el.scrollWidth;
+        const h = el.scrollHeight;
+        const longest = Math.max(w, h);
+
+        // Ask for retina and let SnapDOM clamp: it already fits the result inside the
+        // canvas limit by shrinking the whole image proportionally (it never
+        // truncates). Pre-shrinking here as well multiplied the two reductions
+        // together and produced images half the size they needed to be.
+        const WANT = 2;
+        const scale = Math.min(WANT, MAX_CANVAS_PX / longest);   // what we will get
+        // Below 1 the picture ends up smaller than the text is on screen.
+        const shrunk = scale < 1;
+
+        const img = await snap.toPng(el, { scale: WANT, backgroundColor: this._captureBg() });
+        const url = img.src;
+        const name = (this.docName || '洛谷题解').replace(/\.(md|markdown|txt)$/i, '');
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${name}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        if (shrunk) {
+          this.showToast(
+            `文档过长（${Math.round(h)}px），受浏览器 ${MAX_CANVAS_PX}px 画布上限所限，`
+            + `整图已压到 ${scale.toFixed(2)}x，文字会偏小。想要清晰版建议改用「打印 / 导出 PDF」，`
+            + '或分几段导出。', 'info');
+        } else {
+          this.showToast(
+            `长图已导出（${Math.round(w * scale)}×${Math.round(h * scale)}，${scale.toFixed(2)}x）`,
+            'success');
+        }
+      } catch (err) {
+        this.showToast(`长图导出失败：${err && err.message ? err.message : err}`, 'error');
+      } finally {
+        undo();
+      }
+    }
+
+    /** Background colour for the capture, so dark theme does not come out transparent. */
+    _captureBg() {
+      try {
+        const c = window.getComputedStyle(this.previewEl).backgroundColor;
+        if (c && c !== 'transparent' && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(c)) return c;
+      } catch (e) { /* fall through */ }
+      return (document.documentElement.getAttribute('data-theme') === 'dark')
+        ? '#1e1e1e' : '#ffffff';
+    }
+
+    /**
+     * Put the preview into a state worth photographing, and return a function that
+     * restores it exactly.
+     *
+     * Three things have to change, each of which silently ruins the output:
+     *   1. the pane is a scroll container, so only the visible slice would be drawn;
+     *   2. its scrollbars would be baked into the picture;
+     *   3. collapsed callouts would be captured shut, hiding their content.
+     */
+    _prepareForCapture(el) {
+      const saved = {
+        height: el.style.height,
+        maxHeight: el.style.maxHeight,
+        overflow: el.style.overflow,
+        paddingBottom: el.style.paddingBottom,
+        scrollTop: el.scrollTop,
+      };
+      el.style.height = 'auto';
+      el.style.maxHeight = 'none';
+      el.style.overflow = 'visible';
+      // syncEditorTailPadding() pads the bottom of the pane so the last line can be
+      // scrolled up to meet the editor. That padding is invisible on screen but comes
+      // out as a tall blank strip under the article in the picture.
+      el.style.paddingBottom = '0px';
+
+      const style = document.createElement('style');
+      style.textContent =
+        '#previewContent::-webkit-scrollbar{display:none!important}'
+        + '#previewContent{scrollbar-width:none!important}';
+      document.head.appendChild(style);
+
+      // Remember which boxes were shut so they can be shut again afterwards.
+      const reclose = [];
+      el.querySelectorAll('details').forEach((d) => {
+        if (!d.open) { d.open = true; reclose.push(d); }
+      });
+
+      return () => {
+        reclose.forEach((d) => { d.open = false; });
+        if (style.parentNode) style.parentNode.removeChild(style);
+        el.style.height = saved.height;
+        el.style.maxHeight = saved.maxHeight;
+        el.style.overflow = saved.overflow;
+        el.style.paddingBottom = saved.paddingBottom;
+        el.scrollTop = saved.scrollTop;
+      };
     }
 
     // Print / PDF Export

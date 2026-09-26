@@ -142,6 +142,12 @@ jobs:
       - name: Workspace behaviour suite
         run: node test-browser/workspace.test.js
 
+      # Long-image export. The capture temporarily mutates the preview pane, so this
+      # guards both the picture (complete, no scrollbars, callouts open) and that the
+      # page is left exactly as it was.
+      - name: Long-image export suite
+        run: node test-browser/export-image.test.js
+
   python:
     runs-on: ubuntu-latest
     steps:
