@@ -1,6 +1,6 @@
 [package]
 name = "luogu-markdown-editor"
-version = "1.40.2"
+version = "1.40.3"
 description = "洛谷 Markdown & KaTeX 编辑器桌面版"
 authors = ["wudream813"]
 edition = "2021"

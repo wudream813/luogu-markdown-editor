@@ -2073,12 +2073,12 @@ const safeStorage = {
     insertCallout(type, title, isOpen) {
       const openParam = isOpen ? '{open}' : '';
       const titleParam = title ? `[${title}]` : '';
-      this.insertAtCursor(T('\\n\\n::::{a}{b}{c}\\n这里是{d}折叠框的内容。\\n::::\\n\\n', { a: type, b: titleParam, c: openParam, d: type }));
+      this.insertAtCursor(T('\n\n::::{a}{b}{c}\n这里是{d}折叠框的内容。\n::::\n\n', { a: type, b: titleParam, c: openParam, d: type }));
     }
 
     insertEpigraph(author, content) {
       const authorParam = author ? `[——${author}]` : '';
-      this.insertAtCursor(T('\\n\\n:::epigraph{a}\\n{b}\\n:::\\n\\n', { a: authorParam, b: content || T('千里之行，始于足下。') }));
+      this.insertAtCursor(T('\n\n:::epigraph{a}\n{b}\n:::\n\n', { a: authorParam, b: content || T('千里之行，始于足下。') }));
     }
 
     insertAlign(mode) {

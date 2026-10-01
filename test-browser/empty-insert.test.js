@@ -69,6 +69,19 @@ const path = require('path');
       await p.click(`[onclick="LuoguEditor.${method}()"]`);
       await valid(selector);
     }
+    for (const lang of ['zh', 'en']) {
+      await empty();
+      await p.evaluate(lang => { LuoguI18n.setLang(lang); LuoguEditor.insertCallout('info', 'Title', true); }, lang);
+      await valid('details');
+      ck(await p.evaluate(() => !LuoguEditor.getContent().includes('\\n') && LuoguEditor.getContent().startsWith('\n\n::::info')),
+        lang + ' 折叠框插入真实换行，而非字面量反斜杠 n');
+      await empty();
+      await p.evaluate(() => LuoguEditor.insertEpigraph('Author', 'First line\nSecond line'));
+      await valid('.luogu-epigraph');
+      ck(await p.evaluate(() => !LuoguEditor.getContent().includes('\\n') && LuoguEditor.getContent().includes('First line\nSecond line')),
+        lang + ' 引言保留真实多行并正确渲染');
+    }
+    await p.evaluate(() => LuoguI18n.setLang('zh'));
     await empty();
     await p.evaluate(() => { LuoguEditor.setViewMode('typora'); LuoguEditor.insertHeading(2); });
     await valid('h2');

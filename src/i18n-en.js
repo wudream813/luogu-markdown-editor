@@ -6,6 +6,7 @@
   'use strict';
   if (!global.LuoguI18n) return;
   global.LuoguI18n._extend({
+    "\n\n::::{a}{b}{c}\n这里是{d}折叠框的内容。\n::::\n\n": "\n\n::::{a}{b}{c}\nThis is the body of the {d} callout box.\n::::\n\n",
     "\n\n:::Footer[第 {page} 页 / 共 {pages} 页]\n\n": "\n\n:::Footer[Page {page} of {pages}]\n\n",
     "\n\n:::Header[页眉文字]\n\n": "\n\n:::Header[header text]\n\n",
     "\n\n:::align{{mode}}\n这里是{a}排版的内容\n:::\n\n": "\n\n:::align{{mode}}\n{a} content goes here\n:::\n\n",
@@ -78,7 +79,6 @@
     "Tuack 竞赛表格": "Tuack contest table",
     "Tuack 表格": "Tuack table",
     "Typora 模式 (所见即所得，点击段落就地编辑)": "Typora mode (WYSIWYG – click a paragraph to edit it in place)",
-    "\\n\\n::::{a}{b}{c}\\n这里是{d}折叠框的内容。\\n::::\\n\\n": "\\n\\n::::{a}{b}{c}\\nThis is the body of the {d} callout box.\\n::::\\n\\n",
     "\\text{满足条件 } x > 0": "\\text{if } x > 0",
     "n 次方根": "nth root",
     "{a} 个项目": "{a} items",
