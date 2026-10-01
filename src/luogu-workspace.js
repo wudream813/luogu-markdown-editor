@@ -475,6 +475,21 @@
       } catch (e) { /* 记不住不影响使用 */ }
     }
 
+    // Toolbar/modal insertions and undo set textarea.value without a native input
+    // event. Keep the owning tab and close/save protection in sync with those edits.
+    syncActiveContent() {
+      if (!this.enabled) return;
+      const d = this.docs[this.active];
+      if (!d) return;
+      const content = this.editor.getContent();
+      if (content === d.content) return;
+      d.content = content;
+      d.dirty = true;
+      this.renderTabs();
+      this._markDirtyInTree();
+      this._scheduleAutoSave();
+    }
+
     _bindEditor() {
       // Track dirtiness from the editor's own input events.
       const ta = document.getElementById('editorTextarea');

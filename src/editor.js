@@ -1140,6 +1140,7 @@ const safeStorage = {
         && document.activeElement.closest('#findBar');
       if (!inFindBar) this.textarea.focus();
       this.scrollCaretIntoView();
+      if (this.workspace) this.workspace.syncActiveContent();
       this.render();
       this.updateLineNumbers();
       this.autoSave();
@@ -1949,8 +1950,19 @@ const safeStorage = {
       });
     }
 
+    // Inserting is an editing action even when the last tab has been closed.
+    // Create a real draft first, so preview, undo, autosave and Save share one document.
+    _ensureInsertionDocument() {
+      if (!this.workspace || this.workspace.docs.length) return;
+      this.workspace.newTab();
+      this.undoStack = [];
+      this.redoStack = [];
+      this.pushHistory(); // an insertion can be undone back to the empty draft
+    }
+
     // Text Insertion Helpers
     wrapSelection(prefix, suffix, defaultText = '') {
+      this._ensureInsertionDocument();
       const start = this.textarea.selectionStart;
       const end = this.textarea.selectionEnd;
       const val = this.textarea.value;
@@ -1966,10 +1978,12 @@ const safeStorage = {
       this.pushHistory();
       this.render();
       this.updateLineNumbers();
+      if (this.workspace) this.workspace.syncActiveContent();
       this.autoSave();
     }
 
     insertAtCursor(text) {
+      this._ensureInsertionDocument();
       const start = this.textarea.selectionStart;
       const end = this.textarea.selectionEnd;
       const val = this.textarea.value;
@@ -1981,6 +1995,7 @@ const safeStorage = {
       this.pushHistory();
       this.render();
       this.updateLineNumbers();
+      if (this.workspace) this.workspace.syncActiveContent();
       this.autoSave();
     }
 
@@ -2096,12 +2111,11 @@ const safeStorage = {
 
     insertTemplate(key) {
       if (typeof LuoguTemplates !== 'undefined' && LuoguTemplates[key]) {
-        // 一个标签页都没有时模板该落在哪？先开一个，否则内容会挂在"没有打开的文件"
-        // 状态下面，连保存都无处可去。
-        if (this.workspace && !this.workspace.docs.length) this.workspace.newTab();
         if (confirm(T('应用模板将覆盖当前编辑区内容，是否继续？'))) {
+          this._ensureInsertionDocument();
           this.resetCalloutToggles();
           this.setContent(LuoguTemplates[key]);
+          if (this.workspace) this.workspace.syncActiveContent();
           this.showToast(T('模板应用成功！'), 'success');
         }
       }
