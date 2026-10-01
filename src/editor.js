@@ -104,6 +104,7 @@ const safeStorage = {
         : (typeof window !== 'undefined' ? window.LuoguTypora : null);
       this.typora = TyporaClass ? new TyporaClass(this) : null;
 
+      this._restoringWorkspace = true;
       // Load saved draft or initial demo template
       const savedContent = safeStorage.getItem('luogu_editor_draft');
       const savedDocName = safeStorage.getItem('luogu_editor_doc_name');
@@ -135,8 +136,8 @@ const safeStorage = {
         this.setContent(T('# 未命名标题\n\n在此开始编写洛谷 Markdown 内容……\n'), false);
       }
 
-      // Tabs + folder tree, desktop only. mount() returns false in a browser, so the
-      // web build is untouched. It has to come *after* the content above: the first
+      // Tabs in both builds; folder tree and disk access are desktop-only.
+      // It has to come *after* the content above: the first
       // tab adopts whatever the editor is showing at this moment, and mounting earlier
       // left the panel holding an empty document while the editor showed the draft.
       if (typeof LuoguWorkspace !== 'undefined') {
@@ -149,6 +150,8 @@ const safeStorage = {
         } catch (e) { /* never let the panel break startup */ }
       }
 
+      this._restoringWorkspace = false;
+      this.autoSave();
       this.bindEvents();
       this.setupPrintHooks();
       this.initMathCheatsheet();
@@ -1545,8 +1548,18 @@ const safeStorage = {
       }
     }
 
-    // Auto save draft to LocalStorage
+    // Web drafts and tabs share the workspace's configurable idle timer.
     autoSave() {
+      if (this.workspace && !this.workspace.isDesktop) {
+        this.workspace._scheduleWebPersist();
+        return;
+      }
+      // During startup wait until the tab snapshot has been restored.
+      if (this._restoringWorkspace) return;
+      this._saveDraftNow();
+    }
+
+    _saveDraftNow() {
       const content = this.getContent();
       const ok = safeStorage.setItem('luogu_editor_draft', content);
       const saveStatus = document.getElementById('saveStatusIndicator');

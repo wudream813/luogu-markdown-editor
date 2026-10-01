@@ -377,10 +377,11 @@ const FAKE_FS = `
   await p.evaluate(() => LuoguEditor.openSettings());
   await p.waitForTimeout(250);
   ck(await p.evaluate(() => {
-    const section = document.querySelector('#settingsModal .settings-section.ws-desktop-only');
+    const section = document.getElementById('settingsEditorSection');
     const rows = section.querySelectorAll('.settings-row');
-    return section.getClientRects().length > 0 && rows.length === 3
-      && [...rows].every((el) => el.getClientRects().length > 0);
+    return section.getClientRects().length > 0 && rows.length === 4
+      && [...rows].filter((el) => el.getClientRects().length > 0).length === 3
+      && document.getElementById('themeShortcut').getClientRects().length > 0;
   }), '桌面版：设置里能看到那三项磁盘相关的设置');
   await p.evaluate(() => LuoguEditor.closeModal('settingsModal'));
 
@@ -390,9 +391,13 @@ const FAKE_FS = `
   // 每次导航后把语言钉回中文，用例只测行为、不测语言。
   await browser.evaluate(()=>{if(window.LuoguI18n)LuoguI18n.setLang('zh');});
   await browser.waitForTimeout(700);
+  await browser.evaluate(() => LuoguEditor.openSettings());
   ck(await browser.evaluate(() =>
-    document.querySelector('#settingsModal .settings-section.ws-desktop-only').getClientRects().length === 0),
-    '网页版：磁盘相关的那一整节不显示（那儿没有可写回的文件）');
+    document.getElementById('webAutoSaveToggle').getClientRects().length > 0
+    && document.getElementById('settingsAutosaveInterval').getClientRects().length > 0
+    && document.getElementById('autoSaveToggle').getClientRects().length === 0
+    && document.getElementById('formatOnSaveToggle').getClientRects().length === 0),
+    '网页版显示浏览器自动保存和间隔，但不显示文件写回与保存时排版');
   await browser.close();
 
   ck(errs.length === 0, '全程无 JS 报错', errs.slice(0, 3).join(' | '));

@@ -166,9 +166,11 @@ jobs:
 
       # The settings sub-page: the gear used to open a hover dropdown; now it opens a
       # modal with 外观 / 语言 / 编辑器, where every choice is a <select> (language and
-      # theme included) plus the desktop-only autosave delay. This guards the entry
+      # theme included) plus the autosave delay in both builds. This guards the entry
       # point, the dropdowns writing through to real state, and that the web build
-      # hides the disk-only rows. The delay actually changing write timing is covered
+      # hides only the disk-only rows (not browser autosave). Web drafts and tab snapshots
+      # follow the switch and delay, including reloads and cancelling pending writes.
+      # The delay actually changing disk write timing is covered
       # in the autosave suite, which has a fake disk.
       - name: Settings suite
         run: node test-browser/settings.test.js

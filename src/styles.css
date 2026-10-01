@@ -3533,7 +3533,9 @@ body.ws-resizing * { cursor: col-resize !important; }
 html.ws-desktop .dropdown-item.ws-desktop-only { display: flex !important; }
 html.ws-desktop .status-item.ws-desktop-only { display: flex !important; }
 html.ws-desktop .settings-row.ws-desktop-only { display: grid !important; }
-html.ws-desktop .settings-section.ws-desktop-only { display: block !important; }
+html.ws-desktop #themeShortcut { display: block !important; }
+.settings-row.ws-web-only { display: grid; }
+html.ws-desktop .ws-web-only { display: none !important; }
 
 /* "是否保存更改？" 三选一对話框：保存 / 不保存 / 取消。
    宿主自带的 confirm 只有两个按钮，缺的正是最常用的那个"保存"。 */

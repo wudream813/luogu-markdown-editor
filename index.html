@@ -99,8 +99,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.35.4.64.73.83H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
 
-      <!-- Theme Switcher -->
-      <div class="tool-dropdown">
+      <!-- Theme Switcher：桌面版保留快捷入口，网页版只在设置中改 -->
+      <div class="tool-dropdown ws-desktop-only" id="themeShortcut">
         <button class="btn btn-icon-only"  title="切换主题" aria-label="切换主题" data-i18n-aria-label="切换主题" data-i18n-title="切换主题">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         </button>
@@ -440,11 +440,18 @@
         </div>
       </section>
 
-      <!-- 编辑器：整节都是磁盘相关的设置，网页版下连标题一起隐藏 -->
-      <section class="settings-section ws-desktop-only">
+      <!-- 编辑器：两端都能设置自动保存，原文件写回与保存时排版只在桌面版提供。 -->
+      <section class="settings-section" id="settingsEditorSection">
         <h4 class="settings-section-title" data-i18n="编辑器">编辑器</h4>
-        <!-- 下面三项依赖“真实磁盘”，只在桌面版显示（.ws-desktop-only 由 html.ws-desktop 解锁）。 -->
-        <div class="settings-row">
+        <div class="settings-row ws-web-only" id="webAutosaveRow">
+          <span class="settings-label" data-i18n="自动保存到浏览器">自动保存到浏览器</span>
+          <label class="settings-switch">
+            <input type="checkbox" id="webAutoSaveToggle"
+                   onchange="LuoguEditor.workspace.setWebAutosave(this.checked)" />
+            <span class="settings-hint" data-i18n="将草稿和所有标签内容保存在当前浏览器，不会写回原文件">将草稿和所有标签内容保存在当前浏览器，不会写回原文件</span>
+          </label>
+        </div>
+        <div class="settings-row ws-desktop-only">
           <span class="settings-label" data-i18n="自动保存到文件">自动保存到文件</span>
           <label class="settings-switch">
             <input type="checkbox" id="autoSaveToggle"
@@ -463,7 +470,7 @@
             <option value="10000" data-i18n="10 秒（省电、省写盘）">10 秒（省电、省写盘）</option>
           </select>
         </div>
-        <div class="settings-row">
+        <div class="settings-row ws-desktop-only">
           <span class="settings-label" data-i18n="保存时自动排版">保存时自动排版</span>
           <label class="settings-switch">
             <input type="checkbox" id="formatOnSaveToggle"
@@ -929,11 +936,11 @@
       <ul style="padding-left: 20px; margin-top: 6px;">
         <li data-i18n-html="<b>设置页</b>：点顶栏右上角的齿轮打开（<code>Esc</code> 或「完成」关闭）。里面分 外观 / 语言 / 编辑器 三节：
           <b>主题</b>（亮色 / 暗色）、<b>界面语言</b>（跟随系统 / 简体中文 / English）、<b>显示排版问题</b>、
-          以及桌面版的<b>自动保存到文件</b>、<b>自动保存间隔</b>（0.5 / 1 / 2.5 / 5 / 10 秒）与<b>保存时自动排版</b>。
+          <b>自动保存间隔</b>（0.5 / 1 / 2.5 / 5 / 10 秒）两端均可设置；网页版可开关<b>自动保存到浏览器</b>（草稿及全部标签内容，不写回原文件），桌面版可开关<b>自动保存到文件</b>与<b>保存时自动排版</b>。网页版的主题只在这里修改。
           关掉「显示排版问题」后，状态栏右下角的「排版评分」徽标会隐藏，编辑时也不再运行排版检查
           （长文档可省下每次输入的检查开销）；所有设置都会被记住。"><b>设置页</b>：点顶栏右上角的齿轮打开（<code>Esc</code> 或「完成」关闭）。里面分 外观 / 语言 / 编辑器 三节：
           <b>主题</b>（亮色 / 暗色）、<b>界面语言</b>（跟随系统 / 简体中文 / English）、<b>显示排版问题</b>、
-          以及桌面版的<b>自动保存到文件</b>、<b>自动保存间隔</b>（0.5 / 1 / 2.5 / 5 / 10 秒）与<b>保存时自动排版</b>。
+          <b>自动保存间隔</b>（0.5 / 1 / 2.5 / 5 / 10 秒）两端均可设置；网页版可开关<b>自动保存到浏览器</b>（草稿及全部标签内容，不写回原文件），桌面版可开关<b>自动保存到文件</b>与<b>保存时自动排版</b>。网页版的主题只在这里修改。
           关掉「显示排版问题」后，状态栏右下角的「排版评分」徽标会隐藏，编辑时也不再运行排版检查
           （长文档可省下每次输入的检查开销）；所有设置都会被记住。</li>
         <li data-i18n="关闭后，工具栏的「洛谷排版修复」按钮仍可随时手动使用。">关闭后，工具栏的「洛谷排版修复」按钮仍可随时手动使用。</li>

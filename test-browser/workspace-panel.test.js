@@ -91,7 +91,7 @@ const FAKE_FS = `{
       ta.value = '# 第二份草稿\n\n刷新之后还应该在。\n';
       ta.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await p.waitForTimeout(1200);   // 等它自己存（防抖 800ms）
+    await p.waitForTimeout(3000);   // 等默认 2.5 秒自动保存（含预览防抖）
     await p.reload({ waitUntil: 'networkidle' });
     await p.waitForTimeout(900);
     ck(await p.evaluate(() => document.querySelectorAll('.ws-tab').length === 2),

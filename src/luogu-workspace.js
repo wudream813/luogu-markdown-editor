@@ -34,6 +34,7 @@
   const AUTOSAVE_IDLE_CHOICES = [500, 1000, 2500, 5000, 10000];
   const AUTOSAVE_INTERVAL_KEY = 'luogu_workspace_autosave_interval';
   const AUTOSAVE_KEY = 'luogu_workspace_autosave';
+  const WEB_AUTOSAVE_KEY = 'luogu_workspace_web_autosave';
   const FORMAT_ON_SAVE_KEY = 'luogu_workspace_format_on_save';
   const COLLAPSED_KEY = 'luogu_workspace_collapsed';
   // 网页版没有磁盘可写，标签页只能自己记着——不然刷新一下全丢。
@@ -292,6 +293,7 @@
       this._autosaveTimer = null;
       // 两个开关默认打开：都是"不用操心"的功能，随时可以在设置里关掉。
       this.autosaveToFile = this._readFlag(AUTOSAVE_KEY, true);
+      this.webAutosave = this._readFlag(WEB_AUTOSAVE_KEY, true);
       this.autosaveInterval = this._readAutosaveInterval();
       this.formatOnSave = this._readFlag(FORMAT_ON_SAVE_KEY, true);
       // 'desktop' 有原生文件系统（文件树、写回、自动保存）；'web' 只有标签页。
@@ -341,7 +343,22 @@
       this._syncSettingsMenu();
       this._toast(T('自动保存间隔：{a} 秒', { a: (next / 1000).toFixed(next % 1000 === 0 ? 0 : 1) }), 'info');
       this._scheduleAutoSave();
+      this._scheduleWebPersist();
       return next;
+    }
+
+    setWebAutosave(on) {
+      this.webAutosave = !!on;
+      this._writeFlag(WEB_AUTOSAVE_KEY, this.webAutosave);
+      this._syncSettingsMenu();
+      this._scheduleWebPersist(); // clears any pending write when disabled
+      const status = document.getElementById('saveStatusIndicator');
+      if (!this.webAutosave && !this.isDesktop && status) {
+        status.textContent = T('已关闭浏览器自动保存');
+        status.classList.remove('save-failed');
+      }
+      this._toast(this.webAutosave ? T('已开启浏览器自动保存') : T('已关闭浏览器自动保存'), 'info');
+      return this.webAutosave;
     }
 
     setAutosaveToFile(on) {
@@ -349,7 +366,7 @@
       this._writeFlag(AUTOSAVE_KEY, this.autosaveToFile);
       this._syncSettingsMenu();
       this._setSaveStatus(this.autosaveToFile ? T('已开启自动保存到文件') : T('已关闭自动保存到文件'));
-      if (this.autosaveToFile) this._scheduleAutoSave();
+      this._scheduleAutoSave();
       return this.autosaveToFile;
     }
 
@@ -361,14 +378,20 @@
       return this.formatOnSave;
     }
 
-    /** 把工作区自己的状态画到设置弹窗里的控件上（控件在 index.html，网页版下隐藏）。 */
+    /** 把工作区自己的状态画到设置弹窗里的控件上（控件在 index.html，两端按保存目标显示）。 */
     _syncSettingsMenu() {
+      const w = document.getElementById('webAutoSaveToggle');
+      if (w) w.checked = !!this.webAutosave;
       const a = document.getElementById('autoSaveToggle');
       if (a) a.checked = !!this.autosaveToFile;
       const i = document.getElementById('settingsAutosaveInterval');
       if (i) i.value = String(this.autosaveInterval);
       const f = document.getElementById('formatOnSaveToggle');
       if (f) f.checked = !!this.formatOnSave;
+      if (!this.isDesktop && !this.webAutosave) {
+        const status = document.getElementById('saveStatusIndicator');
+        if (status) status.textContent = T('已关闭浏览器自动保存');
+      }
     }
 
     /** 状态栏那一行：自动保存到底有没有发生，得看得见。 */
@@ -430,13 +453,15 @@
     }
 
     _scheduleWebPersist() {
-      if (this.isDesktop) return;
       clearTimeout(this._webPersistTimer);
-      this._webPersistTimer = setTimeout(() => this._persistWebDocs(), 800);
+      if (this.isDesktop || !this.webAutosave) return;
+      this._webPersistTimer = setTimeout(() => this._persistWebDocs(), this.autosaveInterval);
     }
 
     _persistWebDocs() {
-      if (this.isDesktop) return;
+      if (this.isDesktop || !this.webAutosave) return;
+      // Keep the legacy current-draft key and the full tab snapshot on the same clock.
+      this.editor._saveDraftNow && this.editor._saveDraftNow();
       try {
         const payload = this.docs.map((d) => ({
           name: d.name,
@@ -483,8 +508,8 @@
 
     /** 每次输入后重置计时器：写盘发生在"停下来"之后，而不是每敲一个字。 */
     _scheduleAutoSave() {
-      if (!this.isDesktop || !this.autosaveToFile) return;
       clearTimeout(this._autosaveTimer);
+      if (!this.isDesktop || !this.autosaveToFile) return;
       this._autosaveTimer = setTimeout(() => this.autosaveNow(), this.autosaveInterval);
     }
 
