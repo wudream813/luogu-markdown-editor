@@ -83,6 +83,21 @@ const SNAP = `(function(root){
     window.Blob = OB;
     return cap;
   });
+  const custom = await p.evaluate(async (snapshot) => {
+    LuoguEditor.setFontSize('preview', 18);
+    const live = eval(snapshot)('#previewContent');
+    let cap = null;
+    const OB = window.Blob;
+    window.Blob = class extends OB {
+      constructor(parts, o) { super(parts, o); if (o && /html/.test(o.type || '')) cap = parts[0]; }
+    };
+    window.showSaveFilePicker = undefined;
+    HTMLAnchorElement.prototype.click = function () {};
+    await LuoguEditor.exportStandaloneHTML();
+    window.Blob = OB;
+    LuoguEditor.setFontSize('preview', 16);
+    return { html: cap, live };
+  }, SNAP);
   await p.close();
 
   ck(typeof html === 'string' && html.length > 1000, '导出产生 HTML');
@@ -105,6 +120,15 @@ const SNAP = `(function(root){
   ck(Math.abs(exp.mathH - prev.mathH) <= 1, '公式高度一致', `${prev.mathH} vs ${exp.mathH}`);
   ck(exp.codeFamily === prev.codeFamily, '代码字体族一致', `${prev.codeFamily} vs ${exp.codeFamily}`);
   ck(exp.codeSize === prev.codeSize, '代码字号一致', `${prev.codeSize} vs ${exp.codeSize}`);
+  const customPage = await b.newPage({ viewport: { width: 1000, height: 800 } });
+  await customPage.setContent(custom.html, { waitUntil: 'networkidle' });
+  await customPage.waitForTimeout(300);
+  const customExport = await customPage.evaluate((s) => eval(s)('body'), SNAP);
+  ck(customExport.mathSize === custom.live.mathSize, '自定义预览字号也同步到导出公式',
+    `${custom.live.mathSize} vs ${customExport.mathSize}`);
+  ck(customExport.codeSize === custom.live.codeSize, '自定义预览字号也同步到导出代码',
+    `${custom.live.codeSize} vs ${customExport.codeSize}`);
+  await customPage.close();
   ck(exp.tokenTotal === prev.tokenTotal, '高亮 token 数一致', `${prev.tokenTotal} vs ${exp.tokenTotal}`);
   ck(exp.tableCount === prev.tableCount, '表格数一致');
 
@@ -229,7 +253,8 @@ const SNAP = `(function(root){
       await v.waitForTimeout(320);
       return v.evaluate(()=>document.querySelector('.toc-list a.is-active')?.textContent);};
     ck(await jump('使用')==='使用','滚动时高亮当前章节');
-    ck(await jump('功能')==='功能','滚动到后段仍准确高亮');
+    const lateActive = await jump('其他方式');
+    ck(lateActive==='其他方式','滚动到后段仍准确高亮',String(lateActive));
 
     // 点击目录跳转（含位于最后一屏、无法再滚动的章节）
     await v.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));

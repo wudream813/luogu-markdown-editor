@@ -35,6 +35,15 @@ const safeStorage = {
   const T = (global.LuoguI18n && global.LuoguI18n.t) || ((s, v) => (v
     ? String(s).replace(/\{(\w+)\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(v, k) ? v[k] : m))
     : s));
+  const LatexTools = global.LuoguLatexEditorTools
+    || (typeof require === 'function' ? require('./latex-editor-tools.js') : null);
+  const EDITOR_FONT_SIZES = [13, 14, 15, 16, 18, 20];
+  const PREVIEW_FONT_SIZES = [14, 15, 16, 17, 18, 20];
+
+  function storedFontSize(key, allowed, fallback) {
+    const value = Number(safeStorage.getItem(key));
+    return allowed.includes(value) ? value : fallback;
+  }
 
 
   class LuoguEditorApp {
@@ -63,6 +72,13 @@ const safeStorage = {
       })();
       this.typora = null;         // lazily constructed once the DOM is bound
       this.currentTheme = 'luogu';
+      this.editorFontSize = storedFontSize('luogu_editor_font_size', EDITOR_FONT_SIZES, 15);
+      this.previewFontSize = storedFontSize('luogu_preview_font_size', PREVIEW_FONT_SIZES, 16);
+      this._latexCompletionContext = null;
+      this._latexCompletionItems = [];
+      this._latexCompletionIndex = 0;
+      this._latexBracketPair = null;
+      this._latexCaretMirror = null;
       this.isSyncScrolling = false;
       this.undoStack = [];
       this.redoStack = [];
@@ -97,6 +113,7 @@ const safeStorage = {
         console.error('Editor elements not found in DOM.');
         return;
       }
+      this.applyFontSizes();
 
       // Typora mode edits blocks straight in the preview. It is optional: if the
       // module is absent the editor keeps working, just without the fourth mode.
@@ -216,6 +233,9 @@ const safeStorage = {
         return 120;
       };
       this.textarea.addEventListener('input', () => {
+        // Pair matching and command suggestions respond immediately; the expensive
+        // preview/linter work keeps its existing idle debounce.
+        this.refreshLatexAssist();
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
           this.pushHistory();
@@ -236,6 +256,9 @@ const safeStorage = {
           hl.scrollTop = this.textarea.scrollTop;
           hl.scrollLeft = this.textarea.scrollLeft;
         }
+        if (this._latexCompletionPopup && !this._latexCompletionPopup.hidden) {
+          this.positionLatexCompletion();
+        }
         if (this.isEchoScroll(this.textarea)) return;
         this.syncScroll('editor');
       });
@@ -245,8 +268,33 @@ const safeStorage = {
         this.syncScroll('preview');
       });
 
-      // Keyboard shortcuts
+      // Keyboard shortcuts and LaTeX editing assists.
       this.textarea.addEventListener('keydown', (e) => this.handleKeyDown(e));
+      this.textarea.addEventListener('keyup', () => this.updateBracketHighlight());
+      this.textarea.addEventListener('click', () => this.refreshLatexAssist());
+      this.textarea.addEventListener('select', () => this.refreshLatexAssist());
+      this.textarea.addEventListener('focus', () => this.refreshLatexAssist());
+      this.textarea.addEventListener('blur', () => {
+        this.hideLatexCompletion();
+        this._latexBracketPair = null;
+        this._paintHighlights();
+      });
+      document.addEventListener('selectionchange', () => {
+        if (document.activeElement === this.textarea) this.refreshLatexAssist();
+      });
+      const completionPopup = document.getElementById('latexCompletionPopup');
+      if (completionPopup) {
+        completionPopup.addEventListener('mousedown', (e) => {
+          // Keep the textarea selection/caret (and its keyboard focus) while choosing
+          // a completion with the pointer.
+          if (e.target.closest('.latex-completion-item')) e.preventDefault();
+        });
+        completionPopup.addEventListener('click', (e) => {
+          const item = e.target.closest('.latex-completion-item');
+          if (!item) return;
+          this.acceptLatexCompletion(Number(item.dataset.index));
+        });
+      }
 
       // Find bar: live search as you type, Enter / Shift+Enter to step, Esc to close.
       const findInput = document.getElementById('findInput');
@@ -370,6 +418,9 @@ const safeStorage = {
         this._lineTopsKey = null;
         this._anchorsKey = null;
         this.updateLineNumbers();
+        if (this._latexCompletionPopup && !this._latexCompletionPopup.hidden) {
+          this.positionLatexCompletion();
+        }
       });
 
       // Splitter resizer
@@ -502,6 +553,11 @@ const safeStorage = {
       const lint = document.getElementById('lintDisplayToggle');
       if (lint) lint.checked = !!this.lintDisplayEnabled;
 
+      const editorSize = document.getElementById('settingsEditorFontSize');
+      if (editorSize) editorSize.value = String(this.editorFontSize);
+      const previewSize = document.getElementById('settingsPreviewFontSize');
+      if (previewSize) previewSize.value = String(this.previewFontSize);
+
       if (this.workspace && this.workspace._syncSettingsMenu) this.workspace._syncSettingsMenu();
     }
 
@@ -513,6 +569,39 @@ const safeStorage = {
 
     _saveSplitRatio() {
       safeStorage.setItem('luogu_editor_split_ratio', String(this.splitRatio));
+    }
+
+    applyFontSizes() {
+      const root = document.documentElement;
+      root.style.setProperty('--editor-font-size', `${this.editorFontSize}px`);
+      root.style.setProperty('--preview-font-size', `${this.previewFontSize}px`);
+      this._syncSettingsModal();
+    }
+
+    setFontSize(target, rawValue) {
+      const editor = target === 'editor';
+      const allowed = editor ? EDITOR_FONT_SIZES : PREVIEW_FONT_SIZES;
+      const value = Number(rawValue);
+      if (!allowed.includes(value)) return false;
+
+      if (editor) {
+        this.editorFontSize = value;
+        safeStorage.setItem('luogu_editor_font_size', String(value));
+      } else if (target === 'preview') {
+        this.previewFontSize = value;
+        safeStorage.setItem('luogu_preview_font_size', String(value));
+      } else {
+        return false;
+      }
+
+      this.applyFontSizes();
+      this._lineTopsKey = null;
+      this._anchorsKey = null;
+      if (this.textarea) this.updateLineNumbers();
+      if (this._latexCompletionPopup && !this._latexCompletionPopup.hidden) {
+        this.positionLatexCompletion();
+      }
+      return value;
     }
 
     // Synchronize scrolling between editor and preview
@@ -848,6 +937,299 @@ const safeStorage = {
       return A.line + (B.line - A.line) * Math.max(0, Math.min(1, t));
     }
 
+    refreshLatexAssist() {
+      this.updateBracketHighlight();
+      this.updateLatexCompletion();
+    }
+
+    updateBracketHighlight() {
+      if (!this.textarea || !LatexTools) return;
+      const collapsed = this.textarea.selectionStart === this.textarea.selectionEnd;
+      if (document.activeElement !== this.textarea || !collapsed) {
+        this._latexBracketPair = null;
+      } else {
+        this._latexBracketPair = LatexTools.findMatchingDelimiter(
+          this.textarea.value, this.textarea.selectionStart,
+        );
+      }
+      this._paintHighlights();
+    }
+
+    updateLatexCompletion() {
+      const popup = document.getElementById('latexCompletionPopup');
+      this._latexCompletionPopup = popup;
+      if (!popup || !this.textarea || !LatexTools
+          || document.activeElement !== this.textarea
+          || this.textarea.selectionStart !== this.textarea.selectionEnd) {
+        this.hideLatexCompletion();
+        return;
+      }
+
+      const text = this.textarea.value;
+      const context = LatexTools.getCompletionContext(text, this.textarea.selectionStart);
+      const items = LatexTools.getLatexSuggestions(context);
+      if (!context || !items.length) {
+        this.hideLatexCompletion();
+        return;
+      }
+
+      const previousName = this._latexCompletionItems[this._latexCompletionIndex]
+        && this._latexCompletionItems[this._latexCompletionIndex].name;
+      this._latexCompletionContext = context;
+      this._latexCompletionItems = items;
+      const previousIndex = items.findIndex((item) => item.name === previousName);
+      this._latexCompletionIndex = previousIndex >= 0 ? previousIndex : 0;
+
+      const list = document.getElementById('latexCompletionItems');
+      if (!list) { this.hideLatexCompletion(); return; }
+      list.textContent = '';
+      items.forEach((item, index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = `latexCompletionItem${index}`;
+        button.dataset.index = String(index);
+        button.className = 'latex-completion-item'
+          + (index === this._latexCompletionIndex ? ' is-active' : '');
+        button.setAttribute('role', 'option');
+        button.setAttribute('aria-selected', index === this._latexCompletionIndex ? 'true' : 'false');
+
+        const command = document.createElement('span');
+        command.className = 'latex-completion-command';
+        command.textContent = item.display;
+        const preview = document.createElement('span');
+        preview.className = 'latex-completion-preview';
+        preview.textContent = item.preview || '';
+        button.append(command, preview);
+        list.appendChild(button);
+      });
+
+      popup.hidden = false;
+      popup.setAttribute('aria-activedescendant', `latexCompletionItem${this._latexCompletionIndex}`);
+      this.positionLatexCompletion();
+    }
+
+    hideLatexCompletion() {
+      const popup = this._latexCompletionPopup || document.getElementById('latexCompletionPopup');
+      if (popup) {
+        popup.hidden = true;
+        popup.removeAttribute('aria-activedescendant');
+      }
+      this._latexCompletionContext = null;
+      this._latexCompletionItems = [];
+      this._latexCompletionIndex = 0;
+    }
+
+    positionLatexCompletion() {
+      const popup = this._latexCompletionPopup || document.getElementById('latexCompletionPopup');
+      const textarea = this.textarea;
+      const stack = textarea && textarea.parentElement;
+      if (!popup || popup.hidden || !textarea || !stack) return;
+
+      let mirror = this._latexCaretMirror;
+      if (!mirror || mirror.parentElement !== stack) {
+        mirror = document.createElement('div');
+        mirror.className = 'latex-caret-mirror';
+        mirror.setAttribute('aria-hidden', 'true');
+        stack.appendChild(mirror);
+        this._latexCaretMirror = mirror;
+      }
+      const style = window.getComputedStyle(textarea);
+      mirror.style.width = `${textarea.clientWidth}px`;
+      mirror.style.fontFamily = style.fontFamily;
+      mirror.style.fontSize = style.fontSize;
+      mirror.style.fontWeight = style.fontWeight;
+      mirror.style.fontStyle = style.fontStyle;
+      mirror.style.lineHeight = style.lineHeight;
+      mirror.style.letterSpacing = style.letterSpacing;
+      mirror.style.padding = style.padding;
+      mirror.style.tabSize = style.tabSize;
+      mirror.style.whiteSpace = style.whiteSpace;
+      mirror.style.wordBreak = style.wordBreak;
+      mirror.style.overflowWrap = style.overflowWrap;
+      mirror.textContent = '';
+      mirror.appendChild(document.createTextNode(textarea.value.slice(0, textarea.selectionStart)));
+      const marker = document.createElement('span');
+      marker.textContent = '\u200b';
+      marker.style.display = 'inline-block';
+      marker.style.width = '0';
+      marker.style.height = '1em';
+      marker.style.padding = '0';
+      marker.style.margin = '0';
+      marker.style.border = '0';
+      marker.style.overflow = 'hidden';
+      mirror.appendChild(marker);
+
+      const caret = marker.getBoundingClientRect();
+      const stackRect = stack.getBoundingClientRect();
+      const popupWidth = popup.offsetWidth || 320;
+      const popupHeight = popup.offsetHeight || 160;
+      let left = caret.left - stackRect.left - textarea.scrollLeft;
+      let top = caret.bottom - stackRect.top - textarea.scrollTop + 5;
+      if (top + popupHeight > stack.clientHeight) {
+        top = caret.top - stackRect.top - textarea.scrollTop - popupHeight - 5;
+      }
+      left = Math.max(4, Math.min(left, stack.clientWidth - popupWidth - 4));
+      top = Math.max(4, Math.min(top, stack.clientHeight - popupHeight - 4));
+      popup.style.left = `${left}px`;
+      popup.style.top = `${top}px`;
+    }
+
+    acceptLatexCompletion(index) {
+      const item = this._latexCompletionItems[index];
+      const context = this._latexCompletionContext;
+      if (!item || !context || !this.textarea) return false;
+      this.hideLatexCompletion();
+      const caret = context.start + item.caretOffset;
+      this.applyEditorTextEdit(context.start, context.end, item.insert, caret, caret);
+      return true;
+    }
+
+    applyEditorTextEdit(start, end, insert, selectionStart, selectionEnd) {
+      if (!this.textarea) return false;
+      const value = this.textarea.value;
+      this.textarea.value = value.slice(0, start) + insert + value.slice(end);
+      const a = selectionStart === undefined ? start + insert.length : selectionStart;
+      const b = selectionEnd === undefined ? a : selectionEnd;
+      this.textarea.focus();
+      this.textarea.setSelectionRange(a, b);
+      this.textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+
+    handleLatexCompletionKeyDown(e) {
+      const popup = this._latexCompletionPopup || document.getElementById('latexCompletionPopup');
+      if (!popup || popup.hidden || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return false;
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const count = this._latexCompletionItems.length;
+        if (!count) return true;
+        const delta = e.key === 'ArrowDown' ? 1 : -1;
+        this._latexCompletionIndex = (this._latexCompletionIndex + delta + count) % count;
+        const buttons = popup.querySelectorAll('.latex-completion-item');
+        buttons.forEach((button, i) => {
+          const active = i === this._latexCompletionIndex;
+          button.classList.toggle('is-active', active);
+          button.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        popup.setAttribute('aria-activedescendant', `latexCompletionItem${this._latexCompletionIndex}`);
+        return true;
+      }
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.hideLatexCompletion();
+        return true;
+      }
+      if (e.key === 'Tab' && !e.shiftKey) {
+        e.preventDefault();
+        this.acceptLatexCompletion(this._latexCompletionIndex);
+        return true;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this.acceptLatexCompletion(this._latexCompletionIndex);
+        return true;
+      }
+      return false;
+    }
+
+    handleLatexPairKeyDown(e) {
+      if (!this.textarea || !LatexTools || e.isComposing
+          || e.ctrlKey || e.metaKey || e.altKey) return false;
+      const value = this.textarea.value;
+      const start = this.textarea.selectionStart;
+      const end = this.textarea.selectionEnd;
+      const key = e.key;
+      const openKeys = ['(', '[', '{'];
+      if (!openKeys.includes(key) && ![')', ']', '}', '|', '.', '<'].includes(key)) return false;
+
+      if (start !== end) {
+        if (!openKeys.includes(key)) return false;
+        const range = LatexTools.getMathRangeAt(value, start);
+        const endRange = LatexTools.getMathRangeAt(value, end);
+        if (!range || !endRange || range.start !== endRange.start || range.end !== endRange.end
+            || LatexTools.isCommentedAt(value, start)) return false;
+        const close = { '(': ')', '[': ']', '{': '}' }[key];
+        e.preventDefault();
+        this.applyEditorTextEdit(start, end, key + value.slice(start, end) + close,
+          start + 1, start + 1 + (end - start));
+        return true;
+      }
+
+      const mathRange = LatexTools.getMathRangeAt(value, start);
+      if (!mathRange || LatexTools.isCommentedAt(value, start)) return false;
+      const before = value.slice(0, start);
+
+      // `\begin{` offers environments in the completion menu; leave its opening brace
+      // unpaired so typing the environment name and `}` can create the matching end.
+      if (key === '{') {
+        const context = LatexTools.getCompletionContext(value, start);
+        if (context && context.type === 'begin-command') {
+          e.preventDefault();
+          this.applyEditorTextEdit(start, end, '{', start + 1, start + 1);
+          return true;
+        }
+      }
+
+      // Move over a closer that is already present before trying environment
+      // completion; otherwise typing through an existing `}` could duplicate it.
+      if ([')', ']', '}'].includes(key) && value[start] === key) {
+        e.preventDefault();
+        this.textarea.setSelectionRange(start + 1, start + 1);
+        this.refreshLatexAssist();
+        return true;
+      }
+
+      // Complete an environment as soon as its closing brace is typed. If an outer
+      // matching `\end{...}` already exists later in the source, keep the edit literal.
+      if (key === '}') {
+        const environment = LatexTools.getEnvironmentAtCloseBrace(value, start);
+        if (environment) {
+          e.preventDefault();
+          if (LatexTools.hasMatchingEnvironmentEnd(value, environment.name, end)) {
+            this.applyEditorTextEdit(start, end, '}', start + 1, start + 1);
+          } else {
+            const insert = `}\n\n\\end{${environment.name}}`;
+            this.applyEditorTextEdit(start, end, insert, start + 2, start + 2);
+          }
+          return true;
+        }
+      }
+
+      // `\left(` becomes `\left(\right)`; the escaped brace spelling is handled
+      // separately because ordinary TeX braces have different source tokens.
+      if (key === '{' && /\\left\\$/.test(before)) {
+        e.preventDefault();
+        this.applyEditorTextEdit(start, end, '{\\right\\}', start + 1, start + 1);
+        return true;
+      }
+      if (['(', '[', '{', '|', '.', '<'].includes(key) && /\\left\s*$/.test(before)) {
+        const open = key === '{' ? '\\{' : key;
+        const close = { '(': ')', '[': ']', '{': '\\}', '|': '|', '.': '.', '<': '>' }[key];
+        const insert = `${open}\\right${close}`;
+        e.preventDefault();
+        this.applyEditorTextEdit(start, end, insert, start + open.length, start + open.length);
+        return true;
+      }
+
+      // TeX's set delimiters are escaped (`\{` / `\}`), so pair those as two-character
+      // tokens instead of inserting a bare closing brace.
+      if (key === '{' && LatexTools.isEscaped(value, start)) {
+        e.preventDefault();
+        this.applyEditorTextEdit(start, end, '{\\}', start + 1, start + 1);
+        return true;
+      }
+
+      const close = { '(': ')', '[': ']', '{': '}' }[key];
+      if (close) {
+        e.preventDefault();
+        this.applyEditorTextEdit(start, end, key + close, start + 1, start + 1);
+        return true;
+      }
+      return false;
+    }
+
     // Keydown shortcuts
     handleKeyDown(e) {
       // Ctrl / Cmd shortcuts
@@ -977,6 +1359,11 @@ const safeStorage = {
         }
       }
 
+      // LaTeX suggestions take priority over normal Tab/Enter behaviour while the
+      // popup is open; delimiter pairing runs before list continuation and indentation.
+      if (this.handleLatexCompletionKeyDown(e)) return;
+      if (this.handleLatexPairKeyDown(e)) return;
+
       // Enter inside a list continues it automatically.
       //
       // Typing a long list otherwise means re-typing the marker on every line, and
@@ -1006,6 +1393,7 @@ const safeStorage = {
               this.textarea.value = val.slice(0, lineStart) + val.slice(start);
               this.textarea.selectionStart = this.textarea.selectionEnd = lineStart;
               this.pushHistory();
+              this.refreshLatexAssist();
               this.render();
               this.updateLineNumbers();
               this.autoSave();
@@ -1029,6 +1417,7 @@ const safeStorage = {
                 const pos = lineStart + bare.length;
                 this.textarea.selectionStart = this.textarea.selectionEnd = pos;
                 this.pushHistory();
+                this.refreshLatexAssist();
                 this.render();
                 this.updateLineNumbers();
                 this.autoSave();
@@ -1044,6 +1433,7 @@ const safeStorage = {
             const pos = start + insert.length;
             this.textarea.selectionStart = this.textarea.selectionEnd = pos;
             this.pushHistory();
+            this.refreshLatexAssist();
             this.render();
             this.updateLineNumbers();
             this.autoSave();
@@ -1079,6 +1469,7 @@ const safeStorage = {
         // Indentation is a real edit: record it so Ctrl+Z can revert it. This was
         // previously missing, making Tab / Shift+Tab silently un-undoable.
         this.pushHistory();
+        this.refreshLatexAssist();
         this.render();
         this.updateLineNumbers();
         this.autoSave();
@@ -1140,6 +1531,7 @@ const safeStorage = {
         && document.activeElement.closest('#findBar');
       if (!inFindBar) this.textarea.focus();
       this.scrollCaretIntoView();
+      this.refreshLatexAssist();
       if (this.workspace) this.workspace.syncActiveContent();
       this.render();
       this.updateLineNumbers();
@@ -1593,6 +1985,7 @@ const safeStorage = {
     setContent(content, pushHistory = true) {
       this.textarea.value = content;
       if (pushHistory) this.pushHistory();
+      this.refreshLatexAssist();
       this.render();
       this.updateLineNumbers();
       this.autoSave();
@@ -1626,7 +2019,10 @@ const safeStorage = {
       this._findMatches = null;
       const layer = document.getElementById('findHighlights');
       if (layer) layer.textContent = '';
-      if (this.textarea) this.textarea.focus();
+      if (this.textarea) {
+        this.textarea.focus();
+        this.updateBracketHighlight();
+      }
     }
 
     isFindOpen() {
@@ -1714,33 +2110,95 @@ const safeStorage = {
       const layer = document.getElementById('findHighlights');
       if (!layer || !this.textarea) return;
       const matches = (this.isFindOpen() && this._findMatches) || [];
-      if (!matches.length) {
+      const pair = this._latexBracketPair;
+      if (!matches.length && !pair) {
         if (layer.firstChild) layer.textContent = '';
         layer.scrollTop = this.textarea.scrollTop;
+        layer.scrollLeft = this.textarea.scrollLeft;
         return;
       }
 
       const text = this.textarea.value;
-      const frag = document.createDocumentFragment();
-      let at = 0;
-      for (let i = 0; i < matches.length; i++) {
-        const m = matches[i];
-        if (m.start > at) frag.appendChild(document.createTextNode(text.slice(at, m.start)));
-        const mark = document.createElement('mark');
-        if (i === this._findIndex) mark.className = 'is-current';
-        // A zero-width match would paint nothing; give it something to show.
-        mark.textContent = m.end > m.start ? text.slice(m.start, m.end) : '\u200b';
-        frag.appendChild(mark);
-        at = m.end;
+      const events = new Map();
+      const eventAt = (position) => {
+        if (!events.has(position)) events.set(position, { starts: [], ends: [], zeros: [] });
+        return events.get(position);
+      };
+      const addInterval = (start, end, kind, isCurrent) => {
+        const a = Math.max(0, Math.min(text.length, start));
+        const b = Math.max(a, Math.min(text.length, end));
+        if (a === b) {
+          if (kind === 'find') eventAt(a).zeros.push({ isCurrent });
+          return;
+        }
+        eventAt(a).starts.push({ kind, isCurrent });
+        eventAt(b).ends.push({ kind, isCurrent });
+      };
+
+      matches.forEach((match, index) => addInterval(
+        match.start, match.end, 'find', index === this._findIndex,
+      ));
+      if (pair) {
+        addInterval(pair.open.start, pair.open.end, 'pair', false);
+        addInterval(pair.close.start, pair.close.end, 'pair', false);
       }
+
+      const frag = document.createDocumentFragment();
+      let cursor = 0;
+      let activeFind = 0;
+      let activeCurrent = 0;
+      let activePair = 0;
+      const appendText = (start, end) => {
+        if (end <= start) return;
+        const content = text.slice(start, end);
+        if (!activeFind && !activePair) {
+          frag.appendChild(document.createTextNode(content));
+          return;
+        }
+        const mark = document.createElement('mark');
+        const classes = [];
+        if (activeCurrent) classes.push('is-current');
+        if (activePair) classes.push('latex-match-pair');
+        if (classes.length) mark.className = classes.join(' ');
+        mark.textContent = content;
+        frag.appendChild(mark);
+      };
+      const positions = [...events.keys()].sort((a, b) => a - b);
+      positions.forEach((position) => {
+        appendText(cursor, position);
+        const event = events.get(position);
+        event.ends.forEach(({ kind, isCurrent }) => {
+          if (kind === 'find') {
+            activeFind = Math.max(0, activeFind - 1);
+            if (isCurrent) activeCurrent = Math.max(0, activeCurrent - 1);
+          } else if (kind === 'pair') activePair = Math.max(0, activePair - 1);
+        });
+        event.starts.forEach(({ kind, isCurrent }) => {
+          if (kind === 'find') {
+            activeFind++;
+            if (isCurrent) activeCurrent++;
+          } else if (kind === 'pair') activePair++;
+        });
+        event.zeros.forEach(({ isCurrent }) => {
+          const mark = document.createElement('mark');
+          const classes = [];
+          if (isCurrent) classes.push('is-current');
+          if (activePair) classes.push('latex-match-pair');
+          if (classes.length) mark.className = classes.join(' ');
+          // A zero-width search result would paint nothing; give it a visible anchor.
+          mark.textContent = '\u200b';
+          frag.appendChild(mark);
+        });
+        cursor = position;
+      });
+      appendText(cursor, text.length);
       // Trailing newline keeps the last line's height so the layer scrolls in step.
-      frag.appendChild(document.createTextNode(text.slice(at) + '\n'));
+      frag.appendChild(document.createTextNode('\n'));
       layer.textContent = '';
       layer.appendChild(frag);
       layer.scrollTop = this.textarea.scrollTop;
       layer.scrollLeft = this.textarea.scrollLeft;
     }
-
     _revealMatch() {
       const m = (this._findMatches || [])[this._findIndex];
       if (!m || !this.textarea) return;
@@ -2774,6 +3232,13 @@ const safeStorage = {
       const formulas = (markdown.match(/\$\$[\s\S]*?\$\$|\$[^\$\n]+?\$/g) || []).length;
       const readTime = Math.max(1, Math.ceil(words / 300));
       const nowStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const previewFontSize = (() => {
+        const preview = this.previewEl || document.getElementById('previewContent');
+        const computed = preview && typeof getComputedStyle === 'function'
+          ? Number.parseFloat(getComputedStyle(preview).fontSize)
+          : Number.NaN;
+        return Number.isFinite(computed) && computed > 0 ? computed : this.previewFontSize || 16;
+      })();
 
       // Inline the SAME KaTeX (0.18.4) CSS + fonts the editor uses, so the exported
       // document renders math identically to the preview and also works offline.
@@ -2843,9 +3308,9 @@ const safeStorage = {
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      /* Match the preview pane's base size. KaTeX sizes itself in em (1.21em), so a
-         16px body silently rendered every formula larger than the editor showed. */
-      font-size: 14px;
+      /* Preserve the reader's selected preview size. KaTeX sizes itself in em, so
+         a fixed body size would make exported formulas drift from the live preview. */
+      font-size: ${previewFontSize}px;
       line-height: 1.8;
       color: var(--text);
       background-color: var(--bg);
@@ -3109,7 +3574,7 @@ const safeStorage = {
       margin: 0;
       padding: 14px 0;
       font-family: "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace;
-      font-size: 13px;
+      font-size: 0.8125em;
       line-height: 1.6;
       /* Each .code-line is its own horizontal scroll container, so the <pre>
          itself must NOT scroll; otherwise the gutter line number would be
@@ -3153,7 +3618,7 @@ const safeStorage = {
     }
     /* Tables */
     .luogu-table-wrapper { width: 100%; overflow-x: auto; margin: 1.4em 0; }
-    .luogu-table { width: 100%; border-collapse: collapse; font-size: 13px; border: 1px solid var(--border); }
+    .luogu-table { width: 100%; border-collapse: collapse; font-size: 1em; border: 1px solid var(--border); }
     .luogu-table th, .luogu-table td { padding: 9px 14px; border: 1px solid var(--border); }
     .luogu-table th { background: rgba(0, 0, 0, 0.03); font-weight: 600; }
     .luogu-tuack-table { border: 2px solid #3498db; border-radius: 6px; }
@@ -3168,7 +3633,7 @@ const safeStorage = {
     [data-theme="dark"] .luogu-tuack-table tr:hover td { background: #24303e; }
     /* Callouts */
     .luogu-callout { margin: 1.3em 0; border-radius: 8px; border: 1px solid var(--border); overflow: hidden; }
-    .luogu-callout-summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-weight: 600; font-size: 13px; cursor: pointer; list-style: none; user-select: none; }
+    .luogu-callout-summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-weight: 600; font-size: 0.8125em; cursor: pointer; list-style: none; user-select: none; }
     .luogu-callout-summary::-webkit-details-marker { display: none; }
     .luogu-callout-icon { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; }
     .callout-icon-svg { width: 18px; height: 18px; display: block; }
@@ -3176,7 +3641,7 @@ const safeStorage = {
     .luogu-callout-arrow { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; transition: transform 0.2s ease; }
     .arrow-svg { width: 14px; height: 14px; display: block; }
     .luogu-callout[open] > .luogu-callout-summary .luogu-callout-arrow { transform: rotate(180deg); }
-    .luogu-callout-content { padding: 14px 18px; border-top: 1px solid var(--border); font-size: 13px; }
+    .luogu-callout-content { padding: 14px 18px; border-top: 1px solid var(--border); font-size: 1em; }
     .luogu-callout-info { border-left: 4px solid #3498db; }
     .luogu-callout-info > .luogu-callout-summary { background: #ebf5fb; color: #1f618d; }
     .luogu-callout-success { border-left: 4px solid #2ecc71; }
@@ -3212,8 +3677,8 @@ const safeStorage = {
     /* Epigraph */
     .luogu-epigraph { position: relative; margin: 1.5em 0; padding: 16px 20px 16px 48px; background: rgba(0,0,0,0.02); border-left: 4px solid var(--primary); border-radius: 6px; }
     .luogu-epigraph-quote-mark { position: absolute; top: 6px; left: 14px; font-size: 38px; line-height: 1; font-family: Georgia, serif; color: var(--primary); opacity: 0.5; }
-    .luogu-epigraph-body { font-style: italic; font-size: 14px; margin-bottom: 6px; }
-    .luogu-epigraph-author { text-align: right; font-size: 12px; color: var(--text-muted); }
+    .luogu-epigraph-body { font-style: italic; font-size: 1em; margin-bottom: 6px; }
+    .luogu-epigraph-author { text-align: right; font-size: 0.86em; color: var(--text-muted); }
     .luogu-align-center { text-align: center; margin: 1.2em 0; }
     .luogu-align-right { text-align: right; margin: 1.2em 0; }
     /* KaTeX sizing uses the inlined 0.18.4 stylesheet (class .katex-sizing.reset-size6.sizeN);

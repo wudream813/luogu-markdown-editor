@@ -51,6 +51,24 @@ const { chromium } = require('playwright');
     .map((e) => e.textContent.trim()).join()) === '外观,语言,编辑器',
     '弹窗里分了 外观 / 语言 / 编辑器 三节');
 
+  // ---- 1b. Editor and preview typography ----
+  ck(await p.evaluate(() => document.getElementById('settingsEditorFontSize').value) === '15',
+    '编辑字号默认从原 13px 调大到 15px');
+  ck(await p.evaluate(() => document.getElementById('settingsPreviewFontSize').value) === '16',
+    '预览（包括 KaTeX 公式）默认字号为 16px');
+  await p.selectOption('#settingsEditorFontSize', '18');
+  await p.selectOption('#settingsPreviewFontSize', '20');
+  await p.evaluate(() => LuoguEditor.setContent('$$\\frac{1}{2}$$'));
+  await p.waitForTimeout(250);
+  ck(await p.evaluate(() => getComputedStyle(document.getElementById('editorTextarea')).fontSize) === '18px',
+    '编辑字号控件即时应用到源码区');
+  ck(await p.evaluate(() => getComputedStyle(document.getElementById('previewContent')).fontSize) === '20px',
+    '预览字号控件即时应用到预览区');
+  ck(await p.evaluate(() => parseFloat(getComputedStyle(document.querySelector('#previewContent .katex')).fontSize) > 20),
+    'KaTeX 公式随预览字号同步放大');
+  ck(await p.evaluate(() => localStorage.getItem('luogu_editor_font_size') === '18'
+    && localStorage.getItem('luogu_preview_font_size') === '20'), '字号设置分别持久化');
+
   // ---- 2. 语言是下拉框 ----
   ck(await p.evaluate(() => document.getElementById('settingsLangSelect').tagName) === 'SELECT',
     '语言是 <select> 下拉框');
@@ -134,8 +152,8 @@ const { chromium } = require('playwright');
   // ---- 网页版也能修改自动保存，只有原文件写回/保存时排版隐藏 ----
   ck(await p.evaluate(() => {
     const rows = [...document.querySelectorAll('#settingsModal .settings-row')];
-    return rows.length === 7 && rows.filter((el) => el.getClientRects().length).length === 5;
-  }), '网页版显示 5 个设置项，包括浏览器自动保存及间隔');
+    return rows.length === 9 && rows.filter((el) => el.getClientRects().length).length === 7;
+  }), '网页版显示 7 个设置项，包括字号和浏览器自动保存及间隔');
   ck(await p.evaluate(() => document.getElementById('settingsEditorSection').getClientRects().length > 0),
     '网页版编辑器分节可见');
   ck(await p.evaluate(() => document.getElementById('themeShortcut').getClientRects().length === 0),
@@ -177,6 +195,10 @@ const { chromium } = require('playwright');
   await p.evaluate(() => { LuoguI18n.setLang('zh'); LuoguEditor.openSettings(); });
   ck(await p.evaluate(() => !document.getElementById('webAutoSaveToggle').checked
     && LuoguEditor.workspace.autosaveInterval === 500), '开关及间隔跨刷新保留');
+  ck(await p.evaluate(() => document.getElementById('settingsEditorFontSize').value === '18'
+    && document.getElementById('settingsPreviewFontSize').value === '20'
+    && getComputedStyle(document.getElementById('previewContent')).fontSize === '20px'),
+    '字号选择和实际 CSS 跨刷新保留');
   ck(await p.evaluate(() => LuoguEditor.getContent() === '# web saved baseline'),
     '刷新恢复上次保存内容，不是关闭后未保存内容');
   await p.waitForTimeout(900);

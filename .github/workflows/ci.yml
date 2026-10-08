@@ -178,6 +178,9 @@ jobs:
       - name: Settings suite
         run: node test-browser/settings.test.js
 
+      - name: LaTeX editor suite
+        run: node test-browser/latex-editor.test.js
+
       # Bilingual UI, end to end: the browser reports en-US here, so this also pins the
       # first-run default (follow the system language). It checks the text that is only
       # produced while rendering — tab labels, status bar, the help manual, the formula

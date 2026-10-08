@@ -348,6 +348,11 @@
                visual duplicate of content the textarea already exposes. -->
           <div id="findHighlights" class="find-highlights" aria-hidden="true"></div>
           <textarea id="editorTextarea" class="editor-textarea" placeholder="在此输入 Markdown 内容，右侧将实时渲染……" spellcheck="false" data-i18n-placeholder="在此输入 Markdown 内容，右侧将实时渲染……"></textarea>
+          <div id="latexCompletionPopup" class="latex-completion-popup" role="listbox"
+               aria-label="LaTeX 补全" data-i18n-aria-label="LaTeX 补全" hidden>
+            <div id="latexCompletionItems" class="latex-completion-items"></div>
+            <div class="latex-completion-footer" data-i18n="↑↓ 选择 · Tab/Enter 插入 · Esc 关闭">↑↓ 选择 · Tab/Enter 插入 · Esc 关闭</div>
+          </div>
         </div>
       </div>
     </div>
@@ -415,6 +420,30 @@
                   onchange="LuoguEditor.setTheme(this.value)">
             <option value="light" data-i18n="☀️ 亮色（light）">☀️ 亮色（light）</option>
             <option value="dark" data-i18n="🌙 暗色（dark）">🌙 暗色（dark）</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsEditorFontSize" data-i18n="编辑区字号">编辑区字号</label>
+          <select id="settingsEditorFontSize" class="form-select settings-control"
+                  onchange="LuoguEditor.setFontSize('editor', Number(this.value))">
+            <option value="13">13 px</option>
+            <option value="14">14 px</option>
+            <option value="15" selected>15 px</option>
+            <option value="16">16 px</option>
+            <option value="18">18 px</option>
+            <option value="20">20 px</option>
+          </select>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="settingsPreviewFontSize" data-i18n="预览区字号（含公式）">预览区字号（含公式）</label>
+          <select id="settingsPreviewFontSize" class="form-select settings-control"
+                  onchange="LuoguEditor.setFontSize('preview', Number(this.value))">
+            <option value="14">14 px</option>
+            <option value="15">15 px</option>
+            <option value="16" selected>16 px</option>
+            <option value="17">17 px</option>
+            <option value="18">18 px</option>
+            <option value="20">20 px</option>
           </select>
         </div>
         <div class="settings-row">
@@ -1000,6 +1029,7 @@
   <script src="src/luogu-templates.js"></script>
   <script src="src/luogu-typora.js"></script>
   <script src="src/luogu-workspace.js"></script>
+  <script src="src/latex-editor-tools.js"></script>
   <script src="src/editor.js"></script>
 
 </body>
