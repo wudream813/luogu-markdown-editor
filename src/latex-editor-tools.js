@@ -2,8 +2,8 @@
  * Lightweight, offline LaTeX helpers for the textarea editor.
  *
  * The editor keeps Markdown as plain source, so these helpers deliberately work on
- * source offsets rather than rendered KaTeX DOM. They only activate inside math spans
- * and ignore Markdown code, keeping ordinary prose and code blocks untouched.
+ * source offsets rather than rendered KaTeX DOM. TeX commands and delimiter semantics
+ * are math-aware; ordinary bracket pairing also works in prose, while code is ignored.
  */
 (function (root) {
   'use strict';
@@ -413,51 +413,65 @@
     const { mathRanges, codeRanges } = getMathRanges(text);
     if (rangeAt(codeRanges, caret)) return null;
     const mathRange = mathRanges.find((range) => caret >= range.start && caret <= range.end);
-    if (!mathRange) return null;
+    let scanRange = mathRange;
+    if (!scanRange) {
+      // In ordinary Markdown, match brackets only within the surrounding prose
+      // segment; never reach through a formula or code span into unrelated text.
+      let start = 0;
+      let end = text.length;
+      for (const range of [...mathRanges, ...codeRanges]) {
+        if (caret >= range.start && caret < range.end) return null;
+        if (range.end <= caret) start = Math.max(start, range.end);
+        else if (range.start > caret) end = Math.min(end, range.start);
+      }
+      scanRange = { start, end };
+    }
 
     const comments = [];
-    let line = lineStartAt(text, mathRange.start);
-    while (line <= mathRange.end) {
-      const end = lineEndAt(text, line);
-      for (let i = Math.max(line, mathRange.start); i < Math.min(end, mathRange.end); i++) {
-        if (text[i] === '%' && !isEscaped(text, i)) {
-          comments.push({ start: i, end: Math.min(end, mathRange.end) });
-          break;
+    if (mathRange) {
+      let line = lineStartAt(text, mathRange.start);
+      while (line <= mathRange.end) {
+        const end = lineEndAt(text, line);
+        for (let i = Math.max(line, mathRange.start); i < Math.min(end, mathRange.end); i++) {
+          if (text[i] === '%' && !isEscaped(text, i)) {
+            comments.push({ start: i, end: Math.min(end, mathRange.end) });
+            break;
+          }
         }
+        if (end >= mathRange.end) break;
+        line = end + 1;
       }
-      if (end >= mathRange.end) break;
-      line = end + 1;
     }
 
     const pairs = [];
     const ordinaryStack = [];
     const verticalBars = [];
     const latexLeft = [];
-    let i = mathRange.start;
+    let i = scanRange.start;
 
     const addPair = (open, close, kind) => {
       if (!open || !close) return;
       pairs.push({ open, close, kind });
     };
 
-    while (i < mathRange.end) {
+    while (i < scanRange.end) {
       const code = rangeAt(codeRanges, i);
       if (code) { i = code.end; continue; }
       const comment = rangeAt(comments, i);
       if (comment) { i = comment.end; continue; }
 
-      if (startsCommand(text, i, 'left', mathRange.end)) {
+      if (mathRange && startsCommand(text, i, 'left', scanRange.end)) {
         const commandEnd = i + '\\left'.length;
-        const delimiter = findLatexDelimiter(text, commandEnd, mathRange.end);
+        const delimiter = findLatexDelimiter(text, commandEnd, scanRange.end);
         if (delimiter) {
           latexLeft.push({ ...delimiter, commandStart: i, commandEnd });
           i = delimiter.end;
           continue;
         }
       }
-      if (startsCommand(text, i, 'right', mathRange.end)) {
+      if (mathRange && startsCommand(text, i, 'right', scanRange.end)) {
         const commandEnd = i + '\\right'.length;
-        const delimiter = findLatexDelimiter(text, commandEnd, mathRange.end);
+        const delimiter = findLatexDelimiter(text, commandEnd, scanRange.end);
         if (delimiter) {
           const open = latexLeft.pop();
           if (open) addPair(open, delimiter, 'latex-left-right');
@@ -468,23 +482,25 @@
 
       // TeX's named angle/brace delimiters also have an unambiguous opener and closer.
       let handledMacro = false;
-      for (const [macro, kind, side] of MACRO_DELIMITERS) {
-        if (!text.startsWith(macro, i) || /[A-Za-z]/.test(text[i + macro.length] || '')) continue;
-        const token = { start: i, end: i + macro.length, value: macro };
-        if (side === 'open') {
-          ordinaryStack.push({ ...token, kind });
-        } else {
-          const top = ordinaryStack[ordinaryStack.length - 1];
-          if (top && top.kind === kind) addPair(ordinaryStack.pop(), token, kind);
+      if (mathRange) {
+        for (const [macro, kind, side] of MACRO_DELIMITERS) {
+          if (!text.startsWith(macro, i) || /[A-Za-z]/.test(text[i + macro.length] || '')) continue;
+          const token = { start: i, end: i + macro.length, value: macro };
+          if (side === 'open') {
+            ordinaryStack.push({ ...token, kind });
+          } else {
+            const top = ordinaryStack[ordinaryStack.length - 1];
+            if (top && top.kind === kind) addPair(ordinaryStack.pop(), token, kind);
+          }
+          i = token.end;
+          handledMacro = true;
+          break;
         }
-        i = token.end;
-        handledMacro = true;
-        break;
       }
       if (handledMacro) continue;
 
-      // Escaped curly braces are still TeX delimiters (for example, \{x\}).
-      if (text[i] === '\\' && (text[i + 1] === '{' || text[i + 1] === '}') && !isEscaped(text, i)) {
+      // Escaped curly braces are still TeX delimiters (for example, \\{x\\}).
+      if (mathRange && text[i] === '\\' && (text[i + 1] === '{' || text[i + 1] === '}') && !isEscaped(text, i)) {
         const open = text[i + 1] === '{';
         const token = { start: i, end: i + 2, value: text.slice(i, i + 2) };
         if (open) ordinaryStack.push({ ...token, kind: 'brace' });
@@ -506,7 +522,7 @@
         if (top && top.kind === closeKinds[ch]) {
           addPair(ordinaryStack.pop(), { start: i, end: i + 1, value: ch }, closeKinds[ch]);
         }
-      } else if (ch === '|' && !isEscaped(text, i)) {
+      } else if (mathRange && ch === '|' && !isEscaped(text, i)) {
         const token = { start: i, end: i + 1, value: ch, kind: 'bar' };
         if (verticalBars.length) addPair(verticalBars.pop(), token, 'bar');
         else verticalBars.push(token);

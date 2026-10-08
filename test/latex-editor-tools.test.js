@@ -66,7 +66,7 @@ test('matching highlights nested ordinary delimiters and escaped TeX braces', ()
   assert.equal(braces.slice(pair.close.start, pair.close.end), '\\}');
 });
 
-test('matching highlights \u005cleft...\u005cright and ignores prose / fenced code', () => {
+test('matching highlights prose and \u005cleft...\u005cright while ignoring code', () => {
   const text = '$\\left( x + (y) \\right)$';
   const outer = Latex.findMatchingDelimiter(text, text.indexOf('('));
   assert.equal(outer.kind, 'latex-left-right');
@@ -75,7 +75,11 @@ test('matching highlights \u005cleft...\u005cright and ignores prose / fenced co
   const inner = Latex.findMatchingDelimiter(text, text.indexOf('(y)'));
   assert.equal(inner.kind, 'paren');
 
-  assert.equal(Latex.findMatchingDelimiter('text (x)', 5), null);
+  const prose = 'text (x)';
+  const prosePair = Latex.findMatchingDelimiter(prose, prose.indexOf('('));
+  assert.equal(prose.slice(prosePair.open.start, prosePair.open.end), '(');
+  assert.equal(prose.slice(prosePair.close.start, prosePair.close.end), ')');
+  assert.equal(Latex.findMatchingDelimiter('text `code (x)`', 11), null, 'inline code stays untouched');
   assert.equal(Latex.findMatchingDelimiter('```tex\n$(x)$\n```', 9), null);
 });
 

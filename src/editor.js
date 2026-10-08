@@ -1146,10 +1146,16 @@ const safeStorage = {
 
       if (start !== end) {
         if (!openKeys.includes(key)) return false;
-        const range = LatexTools.getMathRangeAt(value, start);
-        const endRange = LatexTools.getMathRangeAt(value, end);
-        if (!range || !endRange || range.start !== endRange.start || range.end !== endRange.end
-            || LatexTools.isCommentedAt(value, start)) return false;
+        const codeRanges = LatexTools.getCodeRanges(value);
+        if (codeRanges.some((range) => range.start < end && range.end > start)) return false;
+        const mathRanges = LatexTools.getMathRanges(value).mathRanges;
+        const touchesMath = mathRanges.some((range) => range.start < end && range.end > start);
+        if (touchesMath) {
+          const range = LatexTools.getMathRangeAt(value, start);
+          const endRange = LatexTools.getMathRangeAt(value, end - 1);
+          if (!range || !endRange || range.start !== endRange.start || range.end !== endRange.end
+              || LatexTools.isCommentedAt(value, start)) return false;
+        }
         const close = { '(': ')', '[': ']', '{': '}' }[key];
         e.preventDefault();
         this.applyEditorTextEdit(start, end, key + value.slice(start, end) + close,
@@ -1158,12 +1164,13 @@ const safeStorage = {
       }
 
       const mathRange = LatexTools.getMathRangeAt(value, start);
-      if (!mathRange || LatexTools.isCommentedAt(value, start)) return false;
+      if (LatexTools.isInCode(value, start)
+          || (mathRange && LatexTools.isCommentedAt(value, start))) return false;
       const before = value.slice(0, start);
 
       // `\begin{` offers environments in the completion menu; leave its opening brace
       // unpaired so typing the environment name and `}` can create the matching end.
-      if (key === '{') {
+      if (mathRange && key === '{') {
         const context = LatexTools.getCompletionContext(value, start);
         if (context && context.type === 'begin-command') {
           e.preventDefault();
@@ -1183,7 +1190,7 @@ const safeStorage = {
 
       // Complete an environment as soon as its closing brace is typed. If an outer
       // matching `\end{...}` already exists later in the source, keep the edit literal.
-      if (key === '}') {
+      if (mathRange && key === '}') {
         const environment = LatexTools.getEnvironmentAtCloseBrace(value, start);
         if (environment) {
           e.preventDefault();
@@ -1199,12 +1206,12 @@ const safeStorage = {
 
       // `\left(` becomes `\left(\right)`; the escaped brace spelling is handled
       // separately because ordinary TeX braces have different source tokens.
-      if (key === '{' && /\\left\\$/.test(before)) {
+      if (mathRange && key === '{' && /\\left\\$/.test(before)) {
         e.preventDefault();
         this.applyEditorTextEdit(start, end, '{\\right\\}', start + 1, start + 1);
         return true;
       }
-      if (['(', '[', '{', '|', '.', '<'].includes(key) && /\\left\s*$/.test(before)) {
+      if (mathRange && ['(', '[', '{', '|', '.', '<'].includes(key) && /\\left\s*$/.test(before)) {
         const open = key === '{' ? '\\{' : key;
         const close = { '(': ')', '[': ']', '{': '\\}', '|': '|', '.': '.', '<': '>' }[key];
         const insert = `${open}\\right${close}`;
@@ -1215,7 +1222,7 @@ const safeStorage = {
 
       // TeX's set delimiters are escaped (`\{` / `\}`), so pair those as two-character
       // tokens instead of inserting a bare closing brace.
-      if (key === '{' && LatexTools.isEscaped(value, start)) {
+      if (mathRange && key === '{' && LatexTools.isEscaped(value, start)) {
         e.preventDefault();
         this.applyEditorTextEdit(start, end, '{\\}', start + 1, start + 1);
         return true;

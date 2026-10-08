@@ -94,13 +94,27 @@ const FILE = process.argv[2] || 'file://' + path.resolve(__dirname, '../LuoguMar
   check(await page.evaluate(() => document.getElementById('editorTextarea').selectionStart
     === '$\\begin{aligned}\n'.length), 'environment completion puts the caret on the body line');
 
-  // Existing text/code and selections remain predictable.
+  // Ordinary Markdown brackets now pair too; inline and fenced code remain literal.
   await setSource('regular prose');
   await page.keyboard.type('(');
-  check(await source() === 'regular prose(', 'ordinary Markdown prose is not auto-paired');
+  check(await source() === 'regular prose()', 'ordinary prose auto-pairs parentheses');
+  await page.keyboard.type(')');
+  check(await source() === 'regular prose()', 'an existing prose closer is skipped');
+  await setSource('regular prose');
+  await page.keyboard.type('[');
+  check(await source() === 'regular prose[]', 'square brackets auto-pair in prose');
+  await setSource('regular prose');
+  await page.keyboard.type('{');
+  check(await source() === 'regular prose{}', 'curly braces auto-pair in prose');
   await setSource('```tex\n$\n```', 8);
   await page.keyboard.type('(');
   check(await source() === '```tex\n$(\n```', 'a fenced code block is left untouched');
+  await setSource('`code`', 5);
+  await page.keyboard.type('(');
+  check(await source() === '`code(`', 'inline code is left untouched');
+  await setSource('hello', 0, 5);
+  await page.keyboard.type('(');
+  check(await source() === '(hello)', 'typing an opener wraps a selected Markdown phrase');
   await setSource('$xy$', 1, 3);
   await page.keyboard.type('(');
   check(await source() === '$(xy)$', 'typing an opener wraps a selection inside a formula');
@@ -112,8 +126,9 @@ const FILE = process.argv[2] || 'file://' + path.resolve(__dirname, '../LuoguMar
     .map((mark) => mark.textContent).join(''));
   check(highlighted === '()', 'moving the caret to a \left delimiter highlights both ends');
   await setSource('text (not math)');
-  check(await page.evaluate(() => document.querySelectorAll('#findHighlights mark.latex-match-pair').length) === 0,
-    'pair highlighting clears outside a math expression');
+  check(await page.evaluate(() => [...document.querySelectorAll('#findHighlights mark.latex-match-pair')]
+    .map((mark) => mark.textContent).join('')) === '()',
+    'matching parentheses are highlighted in ordinary Markdown prose too');
 
   check(errors.length === 0, 'no browser JavaScript errors', errors.slice(0, 3).join(' | '));
   const failures = checks.filter(([pass]) => !pass);
