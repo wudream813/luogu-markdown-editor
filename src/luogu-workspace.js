@@ -645,12 +645,15 @@
       this._toast(T('「{a}」不是 Markdown 文档：预览会按 Markdown 规则渲染，保存时原样写回', { a: name }), 'info');
     }
 
-    activate(i) {
+    activate(i, options) {
       if (i < 0 || i >= this.docs.length) return;
       // Stash the live text before switching away, or edits made since the last
-      // keystroke event would be lost.
-      const cur = this.docs[this.active];
-      if (cur) cur.content = this.editor.getContent();
+      // keystroke event would be lost. closeTab() skips this when it already removed
+      // the active record: the index now names a different tab, not the old buffer.
+      if (!(options && options.skipStash)) {
+        const cur = this.docs[this.active];
+        if (cur) cur.content = this.editor.getContent();
+      }
 
       this.active = i;
       const d = this.docs[i];
@@ -731,6 +734,7 @@
           if (this.docs.indexOf(d) !== i) i = this.docs.indexOf(d);
         }
       }
+      const closedActive = this.docs[this.active] === d;
       this.docs.splice(i, 1);
       if (!this.docs.length) {
         // 允许一个标签都不留。以前这里会补一个空白页，于是"关掉所有文件"这件事
@@ -745,7 +749,10 @@
       } else if (i < this.active) {
         this.active -= 1;
       }
-      this.activate(this.active);
+      // If the active document was removed, `this.active` now points at its
+      // replacement. Do not let activate() mistake that replacement for the old
+      // live editor buffer and overwrite its own saved content.
+      this.activate(this.active, { skipStash: closedActive });
     }
 
     newTab() {

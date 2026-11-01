@@ -186,6 +186,27 @@ const FAKE_FS = `{
   ck(await p.evaluate(() => document.querySelectorAll('.ws-tab').length === 2),
     '重复打开同一文件不新建标签页');
 
+  // Regression for issue #6: saving and closing the active tab must not copy its
+  // live textarea contents into the next tab while that tab is being activated.
+  await p.evaluate(async () => {
+    const ws = LuoguEditor.workspace;
+    window.__aBeforeCloseRegression = ws.docs.find((d) => d.path === '/proj/a.md').content;
+    await ws.openPath('/proj/b.md');
+    const ta = document.getElementById('editorTextarea');
+    ta.value = '# 文件 B\n\n改过的 B 内容。';
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    await ws.saveActive();
+    await ws.closeTab(ws.active);
+  });
+  await p.waitForTimeout(450);
+  ck(await p.evaluate(() => {
+    const ws = LuoguEditor.workspace;
+    const a = ws.docs.find((d) => d.path === '/proj/a.md');
+    return a && a.content === window.__aBeforeCloseRegression
+      && document.getElementById('editorTextarea').value.includes('内容 A')
+      && !document.getElementById('editorTextarea').value.includes('改过的 B 内容');
+  }), '保存并关闭活动标签后，其他标签的内容不被覆盖');
+
   // Expand a subfolder.
   await p.evaluate(() => {
     [...document.querySelectorAll('#wsTree .ws-node')]
